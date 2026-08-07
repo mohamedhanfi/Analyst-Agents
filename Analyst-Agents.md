@@ -240,8 +240,8 @@ Rule: **Repair never invents data.** It only casts types, drops exact duplicates
 
 | Who | Does |
 |-----|------|
-| LLM | select KPIs & chart types, interpret results |
-| Python | execute DSL (whitelist only), stats suite, charts, evidence registry |
+| LLM | select KPIs, interpret results, re-rank chart candidates (with reasons) |
+| Python | execute DSL (whitelist only), stats suite, **planner picks chart shape**, draw, evidence registry |
 
 **Statistical suite**
 
@@ -293,19 +293,35 @@ Function signatures:
 
 `growth` semantic: `(current − baseline) / baseline`; if `over_column` alone → month-basis; for YoY use `period: "YoY"` (compares same calendar month/quarter vs prior year).
 
-**Charts** (choose → Python draws)
+**Charts — data-driven planner (not a fixed menu)**
 
-| Pattern | Chart |
-|---------|-------|
-| over time | line `plt.plot` |
-| by ≤15 cats | bar / pie (≤7) `plt.bar`/`pie` |
-| by >15 cats | barh top-15 |
-| distribution | hist |
-| 3+ measures corr | heatmap `sns.heatmap` |
-| 2 measures | scatter |
+The chart type is **decided by the shape of the data**, not by habit. Python inspects each candidate visual at `analysis/chart_planner.py` and picks the form from an ordered rule table. The LLM only chooses *which facts deserve a chart* and may re-rank candidates with a justification; the shape itself is deterministic:
+
+| # | Data shape (measured by Python) | Chart |
+|---|--------------------------------|-------|
+| 1 | single dimension, ≤ 2 values swap | bar / donut |
+| 2 | ordered axis (dates/months) with ≥ 3 points | line |
+| 3 | single dimension, 3–12 values | vertical bar |
+| 4 | single dimension, 13–50 values | horizontal bar |
+| 5 | single dimension, > 50 values | barh **top-15 + "$rest"** rollup |
+| 6 | numeric distribution / skew ask | histogram (bins: Freedman–Diaconis) |
+| 7 | 2 numeric measures, asked together | scatter + trend line when r significant |
+| 8 | ≥ 3 numeric measures | ranked correlation heatmap |
+| 9 | share / "% of whole", parts ≈ 100% | doughnut (only then) |
+
+Wiring is: **`chart_planner`** takes the KPI list + `data_profile` + numeric/ordinal columns → returns one JSON per chart:
+```json
+{
+  "chart_id": "CH-004", "kind": "line",
+  "reason": "1 ordered dim (month) >= 3 points -> line",
+  "columns": ["order_date", "revenue"],
+  "data": [...], "evidence_id": "EV-007", "computed_by": "pandas"
+}
+```
+Falling back if the data is too thin: planner downgrades to a simple bar or a table, and stamps `reliability: "low_n"`. If the LLM re-ranks, the plan must carry the reason — the final draw is still Python. `chart_metadata.json` records the planner decision + the shape rule hit, so chart choice is reproducible (see §5).
 
 **Input:** cleaned data · plan · understanding · business context · cleaning result
-**Output:** `outputs/kpis.json`, `outputs/statistical_results.json`, `outputs/charts/*.png`, `metadata/chart_metadata.json`, `outputs/evidence_registry.json`
+**Output:** `outputs/kpis.json`, `outputs/statistical_results.json`, `outputs/charts/*.svg`, `metadata/chart_metadata.json` (planner + shape rules + evidence refs), `outputs/evidence_registry.json`
 
 **Rule:** Python always aggregates on **all rows**; sampling is for LLM/UX inspection only. Every computed value gets an evidence_id.
 
