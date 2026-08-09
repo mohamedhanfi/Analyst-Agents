@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Annual Business Review — FY 2024 | Insight Forge</title>
+<meta name="description" content="Executive business report. Findings, numbers and recommended actions.">
+<meta name="theme-color" content="#14244c">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2314244c'/%3E%3Cpolyline points='6,22 12,14 17,18 26,8' stroke='%23c9a227' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='26' cy='8' r='2.2' fill='%23c9a227'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2314244c'/%3E%3Cpolyline points='6,22 12,14 17,18 26,8' stroke='%23c9a227' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='26' cy='8' r='2.2' fill='%23c9a227'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Cairo:wght@400;600;700&family=Noto+Naskh+Arabic:wght@400;600&display=swap" rel="stylesheet">
+<link id="bs-css" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+<style>
+  :root{
+    --navy:#14244c; --navy2:#0b3b8c;
+    --gold:#c9a227; --gold-dark:#8a6100; --gold-soft:#f7efdd;
+    --ink:#1a2233; --muted:#5a6472; --muted-2:#5f6a7c;
+    --line:#d8dfe9; --bg:#f4f6fb;
+    --card-bg:#ffffff; --server:#ffffff;
+  }
+  [data-theme="dark"]{
+    --bg:#0e1420; --card-bg:#161e2f; --server:#0f1626;
+    --ink:#e6ebf5; --muted:#9aa6ba; --muted-2:#aab3c6;
+    --line:#2a3348; --gold:#d4b14a; --gold-dark:#e3c565; --gold-soft:#3a2f12;
+    color-scheme:dark;
+  }
+  body{background:var(--bg); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; color:var(--ink);}
+  html[lang="ar"] body{font-family:"Cairo",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;}
+  html[lang="ar"] h1,html[lang="ar"] h2,html[lang="ar"] h3,html[lang="ar"] h4,html[lang="ar"] h5,.serif{font-family:"Noto Naskh Arabic",Cairo,Georgia,serif;}
+  html[lang="ar"] .metric .val{font-family:"Noto Naskh Arabic",serif;}
+  /* ---------- Masthead ---------- */
+  .masthead{
+    background-image:
+      repeating-linear-gradient(45deg, rgba(255,255,255,.028) 0 1px, transparent 1px 5px),
+      linear-gradient(120deg,#0d1f45,#14244c 60%,#0b3b8c);
+    color:#fff; padding:34px 0 24px;}
+  .masthead .org{font-size:.75rem; letter-spacing:.24em; text-transform:uppercase; color:#9fb2dd; font-weight:600;}
+  .masthead h1{font-weight:700; letter-spacing:-.01em; margin:.35rem 0 .2rem;}
+  .masthead .sub{color:#c6d2ea; font-size:.95rem;}
+  .masthead .meta{display:flex; flex-wrap:wrap; gap:1.2rem 2.6rem; margin-top:1.2rem; font-size:.82rem; color:#aebce0;}
+  .masthead .meta b{display:block; color:#fff; font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; margin-bottom:2px;}
+  .btn-print{background:transparent; border:1px solid var(--gold); color:var(--gold); font-size:.78rem; font-weight:600; padding:.4rem 1rem; border-radius:999px;}
+  .btn-print:hover{background:var(--gold); color:#14244c;}
+  /* ---------- Nav ---------- */
+  .navbar{background:var(--server); box-shadow:0 1px 3px rgba(20,36,76,.08);}
+  .navbar-brand{font-weight:800; color:var(--navy) !important; letter-spacing:.01em;}
+  [data-theme="dark"] .navbar-brand{color:#fff !important;}
+  .navbar .nav-link{font-size:.86rem; font-weight:600; color:#47536b;}
+  [data-theme="dark"] .navbar .nav-link{color:#b7c2d6;}
+  .navbar .nav-link:hover{color:var(--navy2);}
+  /* ---------- Layout ---------- */
+  main{padding-top:1.5rem; padding-bottom:4rem;}
+  .section-rule{border-top:4px solid var(--navy); margin:2.6rem 0 1.8rem;}
+  .sec-head{position:relative;}
+  .sec-head::before{
+    content:attr(data-num); position:absolute; top:-.78em; left:-.12em;
+    font-family:"Source Serif 4",Georgia,serif; font-size:4.6rem; font-weight:700; line-height:1;
+    color:rgba(11,59,140,.09); pointer-events:none; z-index:0;}
+  .sec-head h2{font-size:1.5rem; font-weight:700; color:var(--navy); position:relative; z-index:1;}
+  [data-theme="dark"] .sec-head h2{color:#d7e0f0;}
+  .sec-head .lead-sub{color:var(--muted); font-size:.92rem; margin-top:.2rem; position:relative; z-index:1;}
+  .bg-soft{background-color:#eef2fa;}
+  /* ---------- TOC ---------- */
+  .list-group-item-action{font-weight:600; color:var(--ink);}
+  .list-group-item-action:hover{background:var(--bg); color:var(--navy2);}
+  /* ---------- KPIs ---------- */
+  .metric{border:1px solid var(--line); border-left:5px solid var(--navy2); box-shadow:0 1px 2px rgba(20,34,76,.05); background:var(--card-bg);}
+  html[lang="ar"] .metric{border-left:0; border-right:5px solid var(--navy2);}
+  .metric .lbl{display:flex; align-items:center; gap:.5rem; font-size:.7rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted-2); font-weight:700;}
+  .metric .lbl svg{flex:none; stroke:var(--gold-dark);}
+  .metric .val{font-family:"Source Serif 4",Georgia,serif; font-size:2.5rem; font-weight:700; color:var(--navy); font-variant-numeric:tabular-nums; line-height:1.15; margin:.15rem 0;}
+  [data-theme="dark"] .metric .val{color:#d7e0f0;}
+  .metric .chg{font-size:.88rem;}
+  .metric .note{font-size:.76rem; color:var(--muted-2);}
+  .text-up{color:var(--gold-dark) !important;} .text-down{color:#b3261e !important;}
+  /* ---------- Lang / theme toggles ---------- */
+  .lang-toggle{display:inline-flex; border:1px solid var(--line); border-radius:999px; overflow:hidden;}
+  .lang-toggle button{border:0; background:transparent; color:var(--muted-2); font-size:.76rem; font-weight:700; padding:.28rem .78rem; cursor:pointer;}
+  .lang-toggle button.active{background:var(--navy); color:#fff;}
+  .theme-toggle{display:inline-flex; align-items:center; justify-content:center; width:32px; height:30px; border:1px solid var(--line); border-radius:999px; background:transparent; color:var(--gold-dark); cursor:pointer;}
+  .theme-toggle svg:nth-child(1){display:block;}
+  .theme-toggle svg:nth-child(2){display:none;}
+  [data-theme="dark"] .theme-toggle svg:nth-child(1){display:none;}
+  [data-theme="dark"] .theme-toggle svg:nth-child(2){display:block;}
+  [data-theme="dark"] .theme-toggle{color:var(--gold);}
+  @media print{.lang-toggle, .theme-toggle{display:none !important;}}
+  /* ---------- Executive panel ---------- */
+  div.card.exec-panel{background:var(--navy); color:#dfe5f2; border:1px solid rgba(255,255,255,.06); box-shadow:0 6px 18px rgba(20,36,76,.18); border-left:5px solid var(--gold);}
+  .exec-panel .badge{background:var(--gold-soft); color:var(--gold-dark);}
+  .exec-panel blockquote{border-left-color:var(--gold) !important; color:#d7dfee;}
+  .exec-panel .list-group-item{color:#dfe5f2;}
+  .exec-panel .list-group-item + .list-group-item{border-top:1px solid rgba(255,255,255,.12);}
+  .exec-panel .k{color:var(--gold); font-weight:700;}
+  html[lang="ar"] div.card.exec-panel{border-left:none; border-right:5px solid var(--gold);}
+  html[lang="ar"][data-theme="dark"] div.card.exec-panel{border-left:none; border-right:5px solid var(--gold);}
+  html[lang="ar"] .exec-panel blockquote{border-left-color:transparent !important; border-right-color:var(--gold) !important;}
+  [data-theme="dark"] div.card.exec-panel{background:linear-gradient(120deg,#182238,#1d2a45); border:1px solid var(--line); border-left:5px solid var(--gold);}
+  [data-theme="dark"] .exec-panel .list-group-item{color:#d7dfee;}
+  [data-theme="dark"] .exec-panel .list-group-item + .list-group-item{border-top-color:rgba(255,255,255,.1);}
+  [data-theme="dark"] .exec-panel blockquote{color:#c9d3e6;}
+  /* ---------- Chart cards ---------- */
+  .chart-card .card-header{background:var(--card-bg); font-weight:700; color:var(--navy); border-bottom:1px solid var(--line);}
+  [data-theme="dark"] .chart-card .card-header{color:#d7e0f0;}
+  .chart-wrap{position:relative; height:280px;}
+  @media(max-width:767px){.chart-wrap{height:240px;}}
+  .card{border:1px solid var(--line); box-shadow:0 1px 3px rgba(20,34,76,.05); background:var(--card-bg);}
+  .card-title{font-weight:700; color:var(--navy);}
+  [data-theme="dark"] .card-title{color:#d7e0f0;}
+  p, .card-text{color:var(--ink);}
+  .chart-card .card-header, .card-header.bg-white{background:var(--card-bg) !important; color:var(--navy); border-bottom:1px solid var(--line);}
+  [data-theme="dark"] .card-header.bg-white{color:#dbe5f0 !important;}
+  @media print{.card, .metric, .navbar, [data-theme="dark"] body{color-adjust:exact;} }
+  figure{margin:0; text-align:center;}
+  figcaption{font-size:.76rem; color:var(--muted-2); margin-top:.5rem; font-style:italic;}
+  /* ---------- Tables ---------- */
+  .table{--bs-table-bg:var(--card-bg); --bs-table-color:var(--ink); --bs-table-border-color:var(--line);}
+  .table thead th{background:transparent; font-size:.72rem; text-transform:uppercase; letter-spacing:.07em; color:var(--muted-2); border-bottom-width:2px;}
+  .table thead th{border-bottom-color:var(--navy); font-weight:700;}
+  .table td{border-color:var(--line); color:var(--ink);}
+  .table tbody tr:hover{background:#f3f6fc;}
+  [data-theme="dark"] .table thead th{color:var(--gold);}
+  [data-theme="dark"] .table thead th{border-bottom-color:var(--gold);}
+  [data-theme="dark"] .table td{border-color:#262f45; color:var(--ink);}
+  [data-theme="dark"] .table tbody tr:hover{background:#222b40;}
+  .badge.c-high, .badge.c-med, .badge.c-low{box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);}
+  [data-theme="dark"] .badge.c-med, [data-theme="dark"] .badge.c-low{box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);}
+  [data-theme="dark"] .text-secondary{color:var(--muted) !important;}
+  [data-theme="dark"] .table .text-secondary, [data-theme="dark"] td.text-secondary{color:var(--muted) !important;}
+  [data-theme="dark"] .table .small, [data-theme="dark"] .table td, [data-theme="dark"] .table th{color:var(--ink);}
+  [data-theme="dark"] td[style*="navy2"]{color:#8fb0e8 !important;}
+  /* ---------- Confidence badges ---------- */
+  .c-high{background:var(--gold-soft); color:var(--gold-dark);}
+  .c-med{background:#e7eefc; color:var(--navy2);}
+  .c-low{background:#e9edf4; color:#59657f;}
+  /* ---------- Signature ---------- */
+  .signature{border-top:2px solid var(--navy); margin-top:2.4rem; padding-top:1.6rem;}
+  .signature .lbl{font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted-2);}
+  .signature .sig-line{border-bottom:1.5px solid var(--ink); height:2.6rem; margin-top:.6rem;}
+  .signature .sig-name{font-size:.8rem; color:var(--muted); margin-top:.5rem; text-align:center;}
+  .footer-note{color:var(--muted-2); font-size:.78rem; font-style:italic;}
+  /* ---------- Print ---------- */
+  .sec-head, .sec-block, section, #s1, #s2, #s3, #s4, #s5, #s6{scroll-margin-top:80px;}
+  /* ---------- Scrollspy active ---------- */
+  .navbar .nav-link.active{color:var(--navy2); border-bottom:2px solid var(--gold); padding-bottom:11px;}
+  @media print{
+    body{background:#fff;}
+    .navbar{display:none !important;}
+    .masthead{background:#14244c !important; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+    div.card.exec-panel{background:#14244c !important; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+    main{padding-top:.5rem;}
+    .card, .chart-card, figure, table, tr, .metric{break-inside:avoid; page-break-inside:avoid;}
+    .chart-wrap{height:230px;}
+    .card, .metric{box-shadow:none !important;}
+    a{text-decoration:none !important; color:inherit !important;}
+    .btn-print{display:none !important;}
+  }
+  /* ---------- Back to top ---------- */
+  #toTop{position:fixed; right:20px; bottom:20px; width:44px; height:44px; border-radius:50%;
+    background:var(--navy); color:#fff; border:1px solid var(--gold); display:none; align-items:center; justify-content:center;
+    box-shadow:0 4px 12px rgba(20,36,76,.25); z-index:60; cursor:pointer; font-size:1.05rem;}
+  #toTop:hover{background:var(--navy2);}
+  /* ---------- KPI counters ---------- */
+  .metric .val[rk-count]{transition:color .2s;}
+</style>
+</head>
+<body data-bs-spy="scroll" data-bs-target="#scnav" data-bs-offset="90" tabindex="0">
+
+<!-- ================= MASTHEAD ================= -->
+<header class="masthead">
+  <div class="container">
+    <div class="d-flex justify-content-between align-items-start flex-wrap">
+      <div>
+        <div class="org">Insight Forge · Business Intelligence</div>
+        <h1 data-i18n="title">Annual Business Review</h1>
+        <div class="sub" data-i18n="sub">Sales &amp; Growth · Fiscal Year 2024</div>
+      </div>
+      <div class="d-flex gap-2 mt-2">
+        <button class="btn-print" onclick="downloadCSV()">Download CSV</button>
+        <button class="btn-print" onclick="window.print()">Save as PDF</button>
+      </div>
+    </div>
+    <div class="meta">
+      <div><b>Prepared for</b>Executive Team</div>
+      <div><b>Date</b>February 14, 2025</div>
+      <div><b>Classification</b>Internal — Confidential</div>
+      <div><b>Reference</b>IF/2025/BR-014</div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= NAV ================= -->
+<nav class="navbar navbar-expand-lg sticky-top" id="scnav">
+  <div class="container">
+    <a class="navbar-brand" href="#">IF</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain" aria-controls="navMain" aria-expanded="false" aria-label="Toggle navigation">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navMain">
+      <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+        <li class="nav-item"><a class="nav-link" href="#s1" data-i18n="nav1">Executive Summary</a></li>
+        <li class="nav-item"><a class="nav-link" href="#s2" data-i18n="nav2">Key Figures</a></li>
+        <li class="nav-item"><a class="nav-link" href="#s3" data-i18n="nav3">Performance</a></li>
+        <li class="nav-item"><a class="nav-link" href="#s4" data-i18n="nav4">Findings</a></li>
+        <li class="nav-item"><a class="nav-link" href="#s5" data-i18n="nav5">Issues &amp; Actions</a></li>
+        <li class="nav-item"><a class="nav-link" href="#s6" data-i18n="nav6">Recommendations</a></li>
+      </ul>
+      <div class="d-flex align-items-center gap-2 ms-auto">
+        <span class="navbar-text small fw-bold" style="color:var(--navy2);">IF/2024-06 · v4.5.0</span>
+        <div class="lang-toggle" role="group" aria-label="Language">
+          <button type="button" class="active" data-lang="en" onclick="setLang('en')">EN</button>
+          <button type="button" data-lang="ar" onclick="setLang('ar')">عربي</button>
+        </div>
+        <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark mode" title="Toggle dark mode">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<main>
+<div class="container">
+
+  <!-- ===== TOC ===== -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-body">
+      <h6 class="card-title mb-3" style="font-size:.78rem; letter-spacing:.12em; text-transform:uppercase;" data-i18n="toc_t">Contents</h6>
+      <div class="row g-3" data-i18n-html="toc">
+        <div class="col-md-4">
+          <a href="#s1" class="list-group-item-action d-block py-1 px-2 rounded text-decoration-none text-start border-0 bg-transparent">01 · Executive Summary</a>
+          <a href="#s2" class="list-group-item-action d-block py-1 px-2 rounded text-decoration-none text-start border-0 bg-transparent">02 · Key Figures</a>
+        </div>
+        <div class="col-md-4">
+          <a href="#s3" class="list-group-item-action d-block py-1 px-2 rounded text-decoration-none text-start border-0 bg-transparent">03 · Performance Overview</a>
+          <a href="#s4" class="list-group-item-action d-block py-1 px-2 rounded text-decoration-none text-start border-0 bg-transparent">04 · Findings</a>
+        </div>
+        <div class="col-md-4">
+          <a href="#s5" class="list-group-item-action d-block py-1 px-2 rounded text-decoration-none text-start border-0 bg-transparent">05 · Issues &amp; Recommended Actions</a>
+          <a href="#s6" class="list-group-item-action d-block py-1 px-2 rounded text-decoration-none text-start border-0 bg-transparent">06 · Strategic Recommendations</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 1 EXEC SUMMARY ===== -->
+  <div class="section-rule"></div>
+  <div class="sec-head mt-4 mb-3" id="s1" data-num="01"><h2 class="mb-0" data-i18n="s1_h">Executive Summary</h2></div>
+  <div class="card exec-panel shadow-sm">
+    <div class="card-body p-4">
+      <span class="badge mb-2" data-i18n="s1_b">Executive readout</span>
+      <blockquote class="border-start border-4 ps-3 mt-2 mb-3" data-i18n="s1_q">
+        Revenue grew 27.4% — sustainably — as more customers (▲12%) bought bigger baskets (▲10%). Growth is concentrated and exposure asymmetric: one category now drives nearly 40% of sales.
+      </blockquote>
+      <ol class="list-group list-group-flush" data-i18n-html="s1_list">
+        <li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.01</span> <b>Growth is real and durable.</b> Revenue rose from $1.92M to $2.45M, driven simultaneously by order volume and average order value — a structurally healthier pattern than single-lever growth.</li>
+        <li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.02</span> <b>Electronics is the engine.</b> +34% brings Electronics to 38% of revenue, ahead of Home &amp; Garden (26%) and Apparel (21%).</li>
+        <li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.03</span> <b>Risk is concentrated.</b> Two categories and one channel each represent 64% of revenue — efficient today, fragile under shock.</li>
+        <li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.04</span> <b>Basket size is the main lever.</b> The strongest signal in the data links items-per-order to revenue (r = 0.85).</li>
+        <li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.05</span> <b>Attribution is pending.</b> Promotion and seasonality effects cannot be isolated without campaign data — see Section 6.</li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- ===== 2 KEY FIGURES ===== -->
+  <div class="sec-head mt-5 mb-1" id="s2" data-num="02"><h2 class="mb-0" data-i18n="s2_h">Key Figures</h2></div>
+  <p class="text-secondary mb-4" data-i18n="s2_p">Headline indicators, compared against the prior quarter.</p>
+  <div class="row g-4">
+    <div class="col-sm-6 col-xl-3">
+      <div class="card metric h-100">
+        <div class="card-body">
+          <div class="lbl"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span data-i18n="k1_l">Total revenue</span></div>
+          <div class="val">$2.45M</div>
+          <div class="chg text-up fw-semibold">▲ 27.4% <span class="fw-normal" style="color:var(--muted-2);" data-i18n="k1_p">prior $1.92M</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card metric h-100">
+        <div class="card-body">
+          <div class="lbl"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg><span data-i18n="k2_l">Orders</span></div>
+          <div class="val">2,276</div>
+          <div class="chg text-up fw-semibold">▲ 12.1% <span class="fw-normal" style="color:var(--muted-2);" data-i18n="k2_p">vs prior</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card metric h-100">
+        <div class="card-body">
+          <div class="lbl"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span data-i18n="k3_l">Average order value</span></div>
+          <div class="val">$1,076</div>
+          <div class="chg text-up fw-semibold">▲ 9.8% <span class="fw-normal" style="color:var(--muted-2);" data-i18n="k3_p">vs prior</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card metric h-100">
+        <div class="card-body">
+          <div class="lbl"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg><span data-i18n="k4_l">Growth driver</span></div>
+          <div class="val" style="font-size:1.6rem; line-height:1.3;" data-i18n="k4_v">Basket size</div>
+          <div class="chg fw-semibold" style="color:var(--muted-2);">r = 0.85 — items/order → revenue</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 3 PERFORMANCE ===== -->
+  <div class="sec-head mt-5 mb-1" id="s3" data-num="03"><h2 class="mb-0" data-i18n="s3_h">Performance Overview</h2></div>
+  <p class="text-secondary mb-4" data-i18n="s3_p">The record of the year — hover charts for exact values, use legends to show/hide series.</p>
+  <div class="row g-4">
+    <div class="col-lg-6">
+      <div class="card chart-card h-100">
+        <div class="card-header" data-i18n="c31_t">Revenue progression</div>
+        <div class="card-body"><div class="chart-wrap"><canvas id="chTrend"></canvas></div>
+          <figure><figcaption data-i18n="c31_c">Figure 3.1 — monthly revenue, in $000. Steady accumulation with an accelerated Q4 (shaded).</figcaption></figure></div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card chart-card h-100">
+        <div class="card-header" data-i18n="c32_t">Revenue by category</div>
+        <div class="card-body"><div class="chart-wrap"><canvas id="chCat"></canvas></div>
+          <figure><figcaption data-i18n="c32_c">Figure 3.2 — share of total revenue by category. Electronics highlighted as the growth driver.</figcaption></figure></div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card chart-card h-100">
+        <div class="card-header" data-i18n="c33_t">Revenue by channel</div>
+        <div class="card-body"><div class="chart-wrap"><canvas id="chChannel"></canvas></div>
+          <figure><figcaption data-i18n="c33_c">Figure 3.3 — share by sales channel. Values shown directly for print.</figcaption></figure></div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card chart-card h-100">
+        <div class="card-header" data-i18n="c34_t">Basket size vs spend</div>
+        <div class="card-body"><div class="chart-wrap"><canvas id="chScatter"></canvas></div>
+          <figure><figcaption data-i18n="c34_c">Figure 3.4 — relation between items per order and amount spent.</figcaption></figure></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mt-4">
+    <div class="card-header bg-white fw-bold" style="color:var(--navy);" data-i18n="cat_t">Category breakdown</div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead><tr><th data-i18n="cat_h1">Category</th><th class="text-end" data-i18n="cat_h2">Revenue</th><th class="text-end" data-i18n="cat_h3">Share</th><th class="text-end" data-i18n="cat_h4">Growth</th><th data-i18n="cat_h5">Contribution</th></tr></thead>
+        <tbody>
+          <tr><td class="fw-semibold" data-i18n="cat_r1a">Electronics</td><td class="text-end">$933k</td><td class="text-end">38%</td><td class="text-end text-up fw-semibold">+34%</td><td data-i18n="cat_r1b">Driver of the year</td></tr>
+          <tr><td data-i18n="cat_r2a">Home &amp; Garden</td><td class="text-end">$637k</td><td class="text-end">26%</td><td class="text-end text-up fw-semibold">+18%</td><td data-i18n="cat_r2b">Steady core</td></tr>
+          <tr><td data-i18n="cat_r3a">Apparel</td><td class="text-end">$515k</td><td class="text-end">21%</td><td class="text-end text-up fw-semibold">+12%</td><td data-i18n="cat_r3b">Underperforming</td></tr>
+          <tr><td data-i18n="cat_r4a">Sports &amp; Outdoor</td><td class="text-end">$368k</td><td class="text-end">15%</td><td class="text-end text-up fw-semibold">+9%</td><td data-i18n="cat_r4b">Rebuilding</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ===== 4 FINDINGS ===== -->
+  <div class="sec-head mt-5 mb-1" id="s4" data-num="04"><h2 class="mb-0" data-i18n="s4_h">Findings</h2></div>
+  <p class="text-secondary mb-4" data-i18n="s4_p">Interpretations grounded in the figures above.</p>
+  <div class="row g-4" data-i18n-html="s4_grid">
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start">
+            <h5 class="card-title fs-6">Electronics moves the P&amp;L</h5>
+            <span class="badge c-high" style="font-size:.66rem;">High confidence</span>
+          </div>
+          <p class="card-text small">Electronics grew 34% and now constitutes 38% of total revenue — more than Home &amp; Garden (26%) and Apparel (21%) combined. Pricing, stock, or supply decisions at this level move the headline figure directly.</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-body">
+          <h5 class="card-title">Q4 is real — volume and value grew together</h5>
+          <p class="card-text small">Revenue rose 27.4% through simultaneous growth in orders (▲12%) and average order value (▲10%). Dual-lever growth is more robust than growth from a single lever.</p>
+          <p class="text-secondary small fst-italic mb-0">Honest limit: we can see the jump; we cannot yet prove its cause.</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start">
+            <h5 class="card-title fs-6">Basket size, not price, drives growth</h5>
+            <span class="badge c-med" style="font-size:.66rem;">Medium confidence</span>
+          </div>
+          <p class="card-text small">The strongest correlation pair is items-per-order → revenue (r = 0.85), pointing to bundling, free-shipping thresholds, and cross-sell before any price change.</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start">
+            <h5 class="card-title fs-6">Concentration is a structural risk</h5>
+            <span class="badge c-high" style="font-size:.66rem;">High confidence</span>
+          </div>
+          <p class="card-text small">Two categories and one channel (online) each represent 64% of revenue. Not adverse today — but the single-category buffer is thin, and a shock would hit a large share at once.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 5 ISSUES & ACTIONS ===== -->
+  <div class="sec-head mt-5 mb-1" id="s5" data-num="05"><h2 class="mb-0" data-i18n="s5_h">Issues &amp; Recommended Actions</h2></div>
+  <p class="text-secondary mb-4" data-i18n="s5_p">Why each issue matters, plus the first concrete step.</p>
+  <div data-i18n-html="s5">
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">5.1 · Over-reliance on Electronics + Home (<span class="text-warning">64%</span> of revenue)</h5>
+      <p class="card-text small text-secondary mb-2"><em>Why it matters:</em> a disruption in the core category reduces 38% of revenue at once.</p>
+      <p class="card-text small mb-0"><strong>Action —</strong> trial an assortment refresh in Apparel for 90 days; compare category share before and after.</p>
+    </div>
+  </div>
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">5.2 · The cause of the Q4 acceleration is not yet attributable</h5>
+      <p class="card-text small text-secondary mb-2"><em>Why it matters:</em> without attribution the Q4 result cannot be reproduced deliberately.</p>
+      <p class="card-text small mb-0"><strong>Action —</strong> record promotion/campaign flags so future reports compare "with-promo vs without-promo".</p>
+    </div>
+  </div>
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">5.3 · No customer-level visibility (untapped upside)</h5>
+      <p class="card-text small text-secondary mb-2"><em>Why it matters:</em> repeat-purchase, at-risk and recommendation models require per-customer data, which is not collected today.</p>
+      <p class="card-text small mb-0"><strong>Action —</strong> include customer IDs and demographic fields in the next export.</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-body">
+      <h5 class="card-title">5.4 · Address and size fields have gaps</h5>
+      <p class="card-text small text-secondary mb-2"><em>Why it matters:</em> 45 orders lack a city, so geography-level claims are unreliable.</p>
+      <p class="card-text small mb-0"><strong>Action —</strong> make city mandatory at checkout; treat regional claims as approximate until resolved.</p>
+    </div>
+  </div>
+  </div>
+
+  <!-- ===== 6 RECOMMENDATIONS ===== -->
+  <div class="sec-head mt-5 mb-1" id="s6" data-num="06"><h2 class="mb-0" data-i18n="s6_h">Strategic Recommendations</h2></div>
+  <p class="text-secondary mb-4" data-i18n="s6_p">Quantified direction for the next review cycle.</p>
+  <div class="card">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead><tr><th class="ps-4" data-i18n="s6_h1">#</th><th data-i18n="s6_h2">Recommendation</th><th data-i18n="s6_h3">Basis</th><th class="text-end pe-4" data-i18n="s6_h4">Potential impact</th></tr></thead>
+        <tbody data-i18n-html="s6_grid">
+          <tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.1</td><td>Double down on electronics growth</td><td class="text-secondary small">+34% growth, 38% share</td><td class="fw-semibold text-end pe-4 text-up">Maintain above-market growth</td></tr>
+          <tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.2</td><td>Grow average order value</td><td class="text-secondary small">AOV driven by basket size (r=0.85)</td><td class="fw-semibold text-end pe-4 text-up">+$24.5k / quarter per +1% AOV</td></tr>
+          <tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.3</td><td>Balance category exposure</td><td class="text-secondary small">Two categories = 64% of revenue</td><td class="fw-semibold text-end pe-4 text-up">Worst-case 64% → 59%</td></tr>
+          <tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.4</td><td>Add basket volume to the weekly dashboard</td><td class="text-secondary small">Front-run indicator of revenue</td><td class="fw-semibold text-end pe-4 text-up">Earlier signal, fewer surprises</td></tr>
+          <tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.5</td><td>Collect customer + promotion data</td><td class="text-secondary small">Unlocks attribution and retention</td><td class="fw-semibold text-end pe-4 text-up">Enables causal analysis next cycle</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ===== SIGNATURE ===== -->
+  <div class="row signature" data-i18n-html="sig">
+    <div class="col-md-4"><div class="lbl">Prepared by</div><div class="sig-line"></div><div class="sig-name">Insight Forge — data automation</div></div>
+    <div class="col-md-4"><div class="lbl">Reviewed by</div><div class="sig-line"></div><div class="sig-name">Finance &amp; Strategy</div></div>
+    <div class="col-md-4"><div class="lbl">Approved by</div><div class="sig-line"></div><div class="sig-name">Executive Team</div></div>
+  </div>
+
+  <div class="text-center footer mt-4" data-i18n="foot">
+    Insight Forge · Generated automatically · Mock report for UI development — figures are sample data.
+  </div>
+
+</div>
+</main>
+
+<button id="toTop" title="Back to top" aria-label="Back to top">↑</button>
+
+<script>
+if(typeof ChartDataLabels!=='undefined'){ Chart.register(ChartDataLabels); }
+if(typeof ChartAnnotation!=='undefined'){ Chart.register(ChartAnnotation); }
+
+const G={accent:'#0b3b8c',soft:'#5f83c7',lighter:'#b7c7e8',nav:'#14244c',good:'#1b7f43',gold:'#c9a227',goldDark:'#8a6100'};
+Chart.defaults.font.family='-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif';
+Chart.defaults.font.size=12;
+Chart.defaults.color='#5a6472';
+Chart.defaults.animation.duration=500;
+
+const I18N={
+en:{
+  title:'Insight Forge — Business Analytics Report',
+  sub:'Q4 2025 review · Prepared for the Executive Team · Figures are sample data',
+  nav1:'Summary',nav2:'Key numbers',nav3:'Charts',nav4:'Findings',nav5:'Issues &amp; actions',nav6:'Recommendations',
+  toc_t:'Contents',toc:'<div class="col-md-4 mb-2"><a class="list-group-item list-group-item-action d-flex justify-content-between" href="#s1"><span>1 · Summary</span><span class="text-secondary">→</span></a></div><div class="col-md-4 mb-2"><a class="list-group-item list-group-item-action d-flex justify-content-between" href="#s2"><span>2 · Key numbers</span><span class="text-secondary">→</span></a></div><div class="col-md-4 mb-2"><a class="list-group-item list-group-item-action d-flex justify-content-between" href="#s3"><span>3 · Charts</span><span class="text-secondary">→</span></a></div><div class="col-md-4 mb-2"><a class="list-group-item list-group-item-action d-flex justify-content-between" href="#s4"><span>4 · Findings</span><span class="text-secondary">→</span></a></div><div class="col-md-4 mb-2"><a class="list-group-item list-group-item-action d-flex justify-content-between" href="#s5"><span>5 · Issues &amp; actions</span><span class="text-secondary">→</span></a></div><div class="col-md-4 mb-2"><a class="list-group-item list-group-item-action d-flex justify-content-between" href="#s6"><span>6 · Recommendations</span><span class="text-secondary">→</span></a></div>',
+  s1_h:'Executive Summary',s1_b:'Executive readout',s1_q:'Revenue grew 27.4% year over year, driven by two levers growing together — volume (orders ▲12%) and value (AOV ▲9.8%). Three structural facts matter for the coming quarter: the business is highly concentrated (Electronics + Home &amp; Garden = 64% of revenue), the acceleration is not yet attributable to a cause, and no customer-level data is collected today.',
+  s1_list:'<li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.01</span> <b>Performance:</b> revenue $2.45M, +27.4% — above the 10–15% planning range.</li><li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.02</span> <b>Drivers:</b> growth came from both volume and value; basket size correlates most strongly with revenue.</li><li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.03</span> <b>Risk:</b> two categories carry 64% of revenue — a single shock affects a large share.</li><li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.04</span> <b>Coverage:</b> 45 orders lack a city; geographic claims are approximate until fixed.</li><li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.05</span> <b>Capability:</b> without customer-level data, retention and attribution models remain out of reach.</li>',
+  s1_1:'1.01 · Performance: revenue $2.45M, +27.4% — above the 10–15% planning range.',
+  s1_2:'1.02 · Drivers: growth came from both volume and value; basket size correlates most strongly with revenue.',
+  s1_3:'1.03 · Risk: two categories carry 64% of revenue — a single shock affects a large share.',
+  s1_4:'1.04 · Coverage: 45 orders lack a city; geographic claims are approximate until fixed.',
+  s1_5:'1.05 · Capability: without customer-level data, retention and attribution models remain out of reach.',
+  s2_h:'Key numbers',s2_p:'The metrics the executive team tracks each cycle — current value, change, and the story behind each.',
+  k1_l:'Total revenue',k1_p:'prior $1.92M',k2_l:'Orders',k2_p:'prior 2,041',k3_l:'Average order value',k3_p:'vs prior',k4_l:'Growth driver',k4_v:'Basket size',
+  s3_h:'Charts',s3_p:'The four charts that summarize the period. All figures are sample data.',
+  c31_t:'3.1 · Revenue trend, monthly',c31_c:'+27.4% YoY · Q4 acceleration highlighted',
+  c32_t:'3.2 · Revenue by category',c32_c:'Electronics + Home &amp; Garden = 64% of revenue',
+  c33_t:'3.3 · Revenue by channel',c33_c:'Online is 64% of revenue',
+  c34_t:'3.4 · Basket size vs amount spent',c34_c:'Items per order correlates most strongly with revenue',
+  cat_t:'Category breakdown',cat_h1:'Category',cat_h2:'Revenue',cat_h3:'Share',cat_h4:'YoY',cat_h5:'Growth story',
+  cat_r1a:'Electronics',cat_r1b:'$931k · 38% · +34% · lead driver',
+  cat_r2a:'Home &amp; Garden',cat_r2b:'$637k · 26% · +14% · stable',
+  cat_r3a:'Apparel',cat_r3b:'$515k · 21% · +9% · recovering',
+  cat_r4a:'Sports &amp; Outdoor',cat_r4b:'$367k · 15% · +5% · low base',
+  s4_h:'Findings',s4_p:'Interpretations grounded in the figures above.',
+  s4_grid:'<div class="col-lg-6"><div class="card h-100"><div class="card-body"><div class="d-flex justify-content-between align-items-start"><h5 class="card-title fs-6">Electronics moves the P&amp;L</h5><span class="badge c-high" style="font-size:.66rem;">High confidence</span></div><p class="card-text small">Electronics grew 34% and now constitutes 38% of total revenue — more than Home &amp; Garden (26%) and Apparel (21%) combined.</p></div></div></div><div class="col-lg-6"><div class="card h-100"><div class="card-body"><h5 class="card-title">Q4 is real — volume and value grew together</h5><p class="card-text small">Revenue rose 27.4% through simultaneous growth in orders (▲12%) and average order value (▲10%).</p></div></div></div><div class="col-lg-6"><div class="card h-100"><div class="card-body"><h5 class="card-title fs-6">Basket size, not price, drives growth</h5><p class="card-text small">The strongest correlation pair is items-per-order → revenue (r = 0.85).</p></div></div></div><div class="col-lg-6"><div class="card h-100"><div class="card-body"><h5 class="card-title fs-6">Concentration is a structural risk</h5><p class="card-text small">Two categories and one channel (online) each represent 64% of revenue.</p></div></div></div>',
+  s5_h:'Issues &amp; Recommended Actions',s5_p:'Why each issue matters, plus the first concrete step.',
+  s5:'<div class="card mb-3"><div class="card-body"><h5 class="card-title">5.1 · Over-reliance on Electronics + Home (64% of revenue)</h5><p class="card-text small text-secondary mb-2"><em>Why it matters:</em> a disruption in the core category reduces 38% of revenue at once.</p><p class="card-text small mb-0"><strong>Action —</strong> trial an assortment refresh in Apparel for 90 days.</p></div></div><div class="card mb-3"><div class="card-body"><h5 class="card-title">5.2 · The cause of the Q4 acceleration is not yet attributable</h5><p class="card-text small text-secondary mb-2"><em>Why it matters:</em> without attribution the Q4 result cannot be reproduced deliberately.</p><p class="card-text small mb-0"><strong>Action —</strong> record promotion/campaign flags.</p></div></div><div class="card mb-3"><div class="card-body"><h5 class="card-title">5.3 · No customer-level visibility (untapped upside)</h5><p class="card-text small text-secondary mb-2"><em>Why it matters:</em> repeat-purchase and recommendation models require per-customer data.</p><p class="card-text small mb-0"><strong>Action —</strong> include customer IDs in the next export.</p></div></div><div class="card"><div class="card-body"><h5 class="card-title">5.4 · Address and size fields have gaps</h5><p class="card-text small text-secondary mb-2"><em>Why it matters:</em> 45 orders lack a city, so geography-level claims are unreliable.</p><p class="card-text small mb-0"><strong>Action —</strong> make city mandatory at checkout.</p></div></div>',
+  s6_h:'Strategic Recommendations',s6_p:'Quantified direction for the next review cycle.',
+  s6_h1:'#',s6_h2:'Recommendation',s6_h3:'Basis',s6_h4:'Potential impact',
+  s6_grid:'<tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.1</td><td>Double down on electronics growth</td><td class="text-secondary small">+34% growth, 38% share</td><td class="fw-semibold text-end pe-4 text-up">Maintain above-market growth</td></tr><tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.2</td><td>Grow average order value</td><td class="text-secondary small">AOV driven by basket size (r=0.85)</td><td class="fw-semibold text-end pe-4 text-up">+$24.5k / quarter per +1% AOV</td></tr><tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.3</td><td>Balance category exposure</td><td class="text-secondary small">Two categories = 64% of revenue</td><td class="fw-semibold text-end pe-4 text-up">Worst-case 64% → 59%</td></tr><tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.4</td><td>Add basket volume to the weekly dashboard</td><td class="text-secondary small">Front-run indicator of revenue</td><td class="fw-semibold text-end pe-4 text-up">Earlier signal, fewer surprises</td></tr><tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.5</td><td>Collect customer + promotion data</td><td class="text-secondary small">Unlocks attribution and retention</td><td class="fw-semibold text-end pe-4 text-up">Enables causal analysis next cycle</td></tr>',
+  sig:'<div class="col-md-4"><div class="lbl">Prepared by</div><div class="sig-line"></div><div class="sig-name">Insight Forge — data automation</div></div><div class="col-md-4"><div class="lbl">Reviewed by</div><div class="sig-line"></div><div class="sig-name">Finance &amp; Strategy</div></div><div class="col-md-4"><div class="lbl">Approved by</div><div class="sig-line"></div><div class="sig-name">Executive Team</div></div>',
+  foot:'Insight Forge · Generated automatically · Mock report for UI development — figures are sample data.'
+},
+ar:{
+  title:'إنفورج — تقرير تحليل الأعمال',
+  sub:'مراجعة الربع الرابع 2025 · أُعدّ للإدارة التنفيذية · الأرقام بيانات تجريبية',
+  nav1:'الملخص',nav2:'الأرقام الأساسية',nav3:'الرسوم البيانية',nav4:'النتائج',nav5:'المشكلات والإجراءات',nav6:'التوصيات',
+  toc_t:'المحتويات',toc:'<div class="col-md-4 mb-2"><a class="list-group-item list-group-item-action d-flex justify-content-between" href="#s1"><span>1 · الملخص</span><span class="text-secondary">←</span></a></div><div class="col-md-4 mb-2"><a class="list-group-item list-group-item-action d-flex justify-content-between" href="#s2"><span>2 · الأرقام الأساسية</span><span class="text-secondary">←</span></a></div><div class="col-md-4 mb-2"><a class="list-group-item list-group-item-action d-flex justify-content-between" href="#s3"><span>3 · الرسوم البيانية</span><span class="text-secondary">←</span></a></div><div class="col-md-4 mb-2"><a class="list-group-item list-group-item-action d-flex justify-content-between" href="#s4"><span>4 · النتائج</span><span class="text-secondary">←</span></a></div><div class="col-md-4 mb-2"><a class="list-group-item list-group-item-action d-flex justify-content-between" href="#s5"><span>5 · المشكلات والإجراءات</span><span class="text-secondary">←</span></a></div><div class="col-md-4 mb-2"><a class="list-group-item list-group-item-action d-flex justify-content-between" href="#s6"><span>6 · التوصيات</span><span class="text-secondary">←</span></a></div>',
+  s1_h:'الملخص التنفيذي',s1_b:'قراءة تنفيذية',s1_q:'نمت الإيرادات 27.4% مقارنة بالعام الماضي، مدفوعة برافعتين نمتا معًا — الحجم (الطلبات ▲12%) والقيمة (متوسط قيمة الطلب ▲9.8%). ثلاث حقائق هيكلية تهم الربع القادم: التركيز شديد (الإلكترونيات + المنزل والحديقة = 64% من الإيرادات)، والتسارع غير منسوب إلى سبب مؤكد بعد، ولا تُجمع بيانات على مستوى العميل اليوم.',
+  s1_list:'<li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.01</span> <b>الأداء:</b> الإيرادات 2.45 مليون دولار، +27.4% — أعلى من نطاق التخطيط (10–15%).</li><li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.02</span> <b>المحركات:</b> النمو جاء من الحجم والقيمة معًا؛ حجم السلة يرتبط بقوة أكبر مع الإيرادات.</li><li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.03</span> <b>المخاطر:</b> فئتان تحملان 64% من الإيرادات — أي صدمة واحدة تؤثر على حصة كبيرة.</li><li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.04</span> <b>التغطية:</b> 45 طلبًا بدون مدينة؛ الادعاءات الجغرافية تقريبية حتى تُحل.</li><li class="list-group-item bg-transparent border-0 ps-0"><span class="k fw-bold">1.05</span> <b>القدرات:</b> دون بيانات على مستوى العميل، تظل نماذج الاحتفاظ والإسناد بعيدة المنال.</li>',
+  s1_1:'1.01 · الأداء: الإيرادات 2.45 مليون دولار، +27.4% — أعلى من نطاق التخطيط (10–15%).',
+  s1_2:'1.02 · المحركات: النمو جاء من الحجم والقيمة معًا؛ حجم السلة يرتبط بقوة أكبر مع الإيرادات.',
+  s1_3:'1.03 · المخاطر: فئتان تحملان 64% من الإيرادات — أي صدمة واحدة تؤثر على حصة كبيرة.',
+  s1_4:'1.04 · التغطية: 45 طلبًا بدون مدينة؛ الادعاءات الجغرافية تقريبية حتى تُحل.',
+  s1_5:'1.05 · القدرات: دون بيانات على مستوى العميل، تظل نماذج الاحتفاظ والإسناد بعيدة المنال.',
+  s2_h:'الأرقام الأساسية',s2_p:'المقاييس التي تتابعها الإدارة التنفيذية كل دورة — القيمة الحالية، التغير، والقصة خلف كل منها.',
+  k1_l:'إجمالي الإيرادات',k1_p:'السابق 1.92 مليون',k2_l:'الطلبات',k2_p:'السابق 2,041',k3_l:'متوسط قيمة الطلب',k3_p:'مقارنة بالآخر',k4_l:'محرك النمو',k4_v:'حجم السلة',
+  s3_h:'الرسوم البيانية',s3_p:'الرسوم الأربعة التي تلخص الفترة. جميع الأرقام بيانات تجريبية.',
+  c31_t:'3.1 · اتجاه الإيرادات الشهري',c31_c:'+27.4% سنويًا · تمييز تسارع الربع الرابع',
+  c32_t:'3.2 · الإيرادات حسب الفئة',c32_c:'الإلكترونيات + المنزل والحديقة = 64% من الإيرادات',
+  c33_t:'3.3 · الإيرادات حسب القناة',c33_c:'الإنترنت = 64% من الإيرادات',
+  c34_t:'3.4 · حجم السلة مقابل الإنفاق',c34_c:'عدد العناصر في الطلب يرتبط بقوة أكبر مع الإيرادات',
+  cat_t:'تفصيل الفئات',cat_h1:'الفئة',cat_h2:'الإيرادات',cat_h3:'الحصة',cat_h4:'سنويًا',cat_h5:'قصة النمو',
+  cat_r1a:'الإلكترونيات',cat_r1b:'931 ألف · 38% · +34% · المحرك الرئيسي',
+  cat_r2a:'المنزل والحديقة',cat_r2b:'637 ألف · 26% · +14% · مستقر',
+  cat_r3a:'الملابس',cat_r3b:'515 ألف · 21% · +9% · يتعافى',
+  cat_r4a:'الرياضة والهواء الطلق',cat_r4b:'367 ألف · 15% · +5% · قاعدة منخفضة',
+  s4_h:'النتائج',s4_p:'تفسيرات مستندة إلى الأرقام أعلاه.',
+  s4_grid:'<div class="col-lg-6"><div class="card h-100"><div class="card-body"><div class="d-flex justify-content-between align-items-start"><h5 class="card-title fs-6">الإلكترونيات تتحكم في الربح والخسارة</h5><span class="badge c-high" style="font-size:.66rem;">ثقة عالية</span></div><p class="card-text small">نمت الإلكترونيات 34% وتشكل الآن 38% من إجمالي الإيرادات — أكثر من المنزل والحديقة (26%) والملابس (21%) مجتمعتين.</p></div></div></div><div class="col-lg-6"><div class="card h-100"><div class="card-body"><h5 class="card-title">الربع الرابع حقيقي — الحجم والقيمة نميا معًا</h5><p class="card-text small">ارتفعت الإيرادات 27.4% عبر نمو متزامن في الطلبات (▲12%) ومتوسط قيمة الطلب (▲10%).</p></div></div></div><div class="col-lg-6"><div class="card h-100"><div class="card-body"><h5 class="card-title fs-6">حجم السلة لا السعر هو ما يقود النمو</h5><p class="card-text small">أقوى ارتباط هو عدد العناصر في الطلب ← الإيرادات (r = 0.85).</p></div></div></div><div class="col-lg-6"><div class="card h-100"><div class="card-body"><h5 class="card-title fs-6">التركيز خطر هيكلي</h5><p class="card-text small">فئتان وقناة واحدة (الإنترنت) تمثل كل منها 64% من الإيرادات.</p></div></div></div>',
+  s5_h:'المشكلات والإجراءات الموصى بها',s5_p:'لماذا تهم كل مشكلة، مع أول خطوة عملية.',
+  s5:'<div class="card mb-3"><div class="card-body"><h5 class="card-title">5.1 · الاعتماد المفرط على الإلكترونيات والمنزل (64% من الإيرادات)</h5><p class="card-text small text-secondary mb-2"><em>لماذا تهم:</em> أي خلل في الفئة الأساسية يقلص 38% من الإيرادات دفعة واحدة.</p><p class="card-text small mb-0"><strong>الإجراء —</strong> تجربة تجديد تشكيلة الملابس لمدة 90 يومًا.</p></div></div><div class="card mb-3"><div class="card-body"><h5 class="card-title">5.2 · سبب تسارع الربع الرابع غير منسوب بعد</h5><p class="card-text small text-secondary mb-2"><em>لماذا يهم:</em> بدون إسناد لا يمكن إعادة إنتاج نتيجة الربع الرابع عمدًا.</p><p class="card-text small mb-0"><strong>الإجراء —</strong> تسجيل أعلام العروض والحملات.</p></div></div><div class="card mb-3"><div class="card-body"><h5 class="card-title">5.3 · لا رؤية على مستوى العميل (إمكانات غير مستغلة)</h5><p class="card-text small text-secondary mb-2"><em>لماذا تهم:</em> نماذج إعادة الشراء والتوصية تتطلب بيانات لكل عميل.</p><p class="card-text small mb-0"><strong>الإجراء —</strong> إدراج معرفات العملاء في التصدير القادم.</p></div></div><div class="card"><div class="card-body"><h5 class="card-title">5.4 · ثغرات في حقول العنوان والمقاس</h5><p class="card-text small text-secondary mb-2"><em>لماذا تهم:</em> 45 طلبًا بلا مدينة، لذا الادعاءات الجغرافية غير موثوقة.</p><p class="card-text small mb-0"><strong>الإجراء —</strong> جعل المدينة إلزامية عند إتمام الشراء.</p></div></div>',
+  s6_h:'التوصيات الاستراتيجية',s6_p:'توجيه كمي لدورة المراجعة القادمة.',
+  s6_h1:'#',s6_h2:'التوصية',s6_h3:'الأساس',s6_h4:'الأثر المحتمل',
+  s6_grid:'<tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.1</td><td>التركيز على نمو الإلكترونيات</td><td class="text-secondary small">نمو +34%، حصة 38%</td><td class="fw-semibold text-end pe-4 text-up">استمرار نمو فوق السوق</td></tr><tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.2</td><td>زيادة متوسط قيمة الطلب</td><td class="text-secondary small">مقاد بحجم السلة (r=0.85)</td><td class="fw-semibold text-end pe-4 text-up">+24.5 ألف/ربع لكل +1%</td></tr><tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.3</td><td>توازن التعرض للفئات</td><td class="text-secondary small">فئتان = 64% من الإيرادات</td><td class="fw-semibold text-end pe-4 text-up">أسوأ حالة 64% ← 59%</td></tr><tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.4</td><td>إضافة حجم السلة للوحة الأسبوعية</td><td class="text-secondary small">مؤشر مبكر للإيرادات</td><td class="fw-semibold text-end pe-4 text-up">إشارة أبكر ومفاجآت أقل</td></tr><tr><td class="ps-4 fw-semibold" style="color:var(--navy2);">6.5</td><td>جمع بيانات العملاء والعروض</td><td class="text-secondary small">يفتح الإسناد والاحتفاظ</td><td class="fw-semibold text-end pe-4 text-up">تحليل سببي في الدورة القادمة</td></tr>',
+  sig:'<div class="col-md-4"><div class="lbl">أُعدّ بواسطة</div><div class="sig-line"></div><div class="sig-name">إنفورج — أتمتة البيانات</div></div><div class="col-md-4"><div class="lbl">رُوجع بواسطة</div><div class="sig-line"></div><div class="sig-name">المالية والاستراتيجية</div></div><div class="col-md-4"><div class="lbl">اعتُمد بواسطة</div><div class="sig-line"></div><div class="sig-name">الإدارة التنفيذية</div></div>',
+  foot:'إنفورج · توليد تلقائي · تقرير تجريبي لتطوير الواجهة — الأرقام بيانات تجريبية.'
+}
+};
+
+let CUR='en';
+const EN_BS='https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css';
+const AR_BS='https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css';
+
+function t(key){ return (I18N[CUR]&&I18N[CUR][key])||(I18N.en[key]||''); }
+
+function setLang(lang){
+  CUR=(I18N[lang]?lang:'en');
+  const h=document.documentElement;
+  h.setAttribute('lang',CUR);
+  h.setAttribute('dir',CUR==='ar'?'rtl':'ltr');
+  const bs=document.getElementById('bs-css');
+  if(bs) bs.setAttribute('href',CUR==='ar'?AR_BS:EN_BS);
+  document.querySelectorAll('[data-i18n]').forEach(function(el){
+    const k=el.getAttribute('data-i18n');
+    el.innerHTML=t(k);
+  });
+  document.querySelectorAll('[data-i18n-html]').forEach(function(el){
+    el.innerHTML=t(el.getAttribute('data-i18n-html'));
+  });
+  document.title=t('title');
+  rebuildCharts();
+  try{ localStorage.setItem('if_lang',CUR); }catch(e){}
+  document.querySelectorAll('[data-lang]').forEach(function(b){
+    b.classList.toggle('active',b.getAttribute('data-lang')===CUR);
+  });
+}
+
+function toggleTheme(){
+  const h=document.documentElement;
+  const next=(h.getAttribute('data-theme')==='dark')?'light':'dark';
+  h.setAttribute('data-theme',next);
+  try{ localStorage.setItem('if_theme',next); }catch(e){}
+  rebuildCharts();
+}
+
+function downloadCSV(){
+  const rows=[['Category','Revenue ($000)','Share %','YoY %'],['Electronics',931,38,34],['Home & Garden',637,26,14],['Apparel',515,21,9],['Sports & Outdoor',367,15,5]];
+  const csv=rows.map(r=>r.join(',')).join('\r\n');
+  const a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+  a.download='insight-forge-categories.csv';
+  a.click();
+}
+
+let CH=[];
+function destroyCharts(){ CH.forEach(function(c){ if(c){ try{c.destroy();}catch(e){} } }); CH=[]; }
+
+function rebuildCharts(){
+  destroyCharts();
+  const L=I18N[CUR]||I18N.en;
+  const dark=document.documentElement.getAttribute('data-theme')==='dark';
+  const grid=dark?'#232c41':'#e9edf5';
+  const tick=dark?'#9aa6ba':'#5a6472';
+  Chart.defaults.color=tick;
+  const rev=[118,124,131,139,147,158,166,172,175,203,221,245];
+  const months=CUR==='ar'?['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const cats=CUR==='ar'?['الإلكترونيات','المنزل والحديقة','الملابس','الرياضة والهواء الطلق']:['Electronics','Home & Garden','Apparel','Sports & Outdoor'];
+  const chans=CUR==='ar'?['الإنترنت','المتاجر','الشركاء']:['Online','Retail stores','Partners'];
+  CH.push(new Chart(document.getElementById('chTrend'),{
+    type:'line',
+    data:{labels:months,
+      datasets:[{label:(CUR==='ar'?'الإيرادات (شهريًا، آلاف)':'Revenue (month, $000)'), data:rev,
+        borderColor:G.accent, backgroundColor:dark?'rgba(11,59,140,0.25)':'rgba(11,59,140,0.08)',
+        fill:true, tension:.35,
+        pointRadius:rev.map(function(_,i){return i>=9?6:3;}),
+        pointBackgroundColor:rev.map(function(_,i){return i>=9?G.gold:G.accent;}),
+        pointBorderColor:'#fff', pointHoverRadius:7}]},
+    options:{responsive:true, maintainAspectRatio:false,
+      scales:{y:{title:{display:true,text:(CUR==='ar'?'آلاف الدولارات':'$000')},grid:{color:grid},min:0},x:{grid:{display:false}}},
+      plugins:{
+        legend:{display:false},
+        datalabels:{display:false},
+        annotation:{annotations:{
+          q4:{type:'box', xMin:9.5, xMax:11.5, yMin:150, yMax:255,
+            backgroundColor:'rgba(201,162,39,0.07)', borderColor:'rgba(201,162,39,0.45)', borderWidth:1, borderDash:[5,3],
+            drawTime:'beforeDatasetsDraw',
+            label:{content:(CUR==='ar'?'تسارع الربع الرابع':'Q4 acceleration'), enabled:true, position:'start', xAdjust:6, yAdjust:-4, font:{weight:'bold',size:11}, color:G.goldDark}}
+        }},
+        tooltip:{callbacks:{label:function(c){return ' $'+c.parsed.y+'k';}}}
+      }
+    }
+  }));
+  CH.push(new Chart(document.getElementById('chCat'),{
+    type:'bar',
+    data:{labels:cats,
+      datasets:[{label:(CUR==='ar'?'حصة الإيرادات':'Share of revenue'),data:[38,26,21,15],
+        backgroundColor:[G.gold,G.nav,G.lighter,'#d9e2f3'],borderRadius:4}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      scales:{y:{max:45,title:{display:true,text:(CUR==='ar'?'% من الإيرادات':'% of revenue')},grid:{color:grid}},x:{grid:{display:false}}},
+      plugins:{
+        legend:{display:false},
+        datalabels:{color:G.nav,anchor:'end',align:'end',font:{weight:'bold',size:11},formatter:function(v){return v+'%';}},
+        tooltip:{callbacks:{label:function(c){return c.parsed.y+'%';}}}
+      }
+    }
+  }));
+  CH.push(new Chart(document.getElementById('chChannel'),{
+    type:'doughnut',
+    data:{labels:chans,
+      datasets:[{data:[64,24,12],backgroundColor:[G.accent,G.nav,G.gold],borderWidth:2,borderColor:dark?'#161e2f':'#fff'}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'55%',
+      plugins:{
+        legend:{position:'bottom'},
+        datalabels:{color:'#fff',font:{weight:'bold',size:12},formatter:function(v){return v+'%';}},
+        tooltip:{callbacks:{label:function(c){return c.label+': '+c.parsed+'%';}}}
+      }
+    }
+  }));
+  (function(){
+    const xs=[3,5,8,11,14,17,20,23,26,29,33,37,41,45,49,53];
+    const pts=xs.map(function(x,i){return {x:x,y:150+i*38+[0,7,12,3,9,15,6,11,18,4,13,8,16,10,5,14][i]};});
+    CH.push(new Chart(document.getElementById('chScatter'),{
+      type:'scatter',
+      data:{datasets:[{label:(CUR==='ar'?'الطلبات':'Orders'),data:pts,backgroundColor:G.accent,pointRadius:4,pointHoverRadius:7}]},
+      options:{responsive:true,maintainAspectRatio:false,
+        scales:{
+          x:{type:'linear',title:{display:true,text:(CUR==='ar'?'عدد العناصر في الطلب':'Items per order')},grid:{color:grid}},
+          y:{title:{display:true,text:(CUR==='ar'?'المبلغ المنفق ($)':'Amount spent ($)')},grid:{color:grid}}},
+        plugins:{legend:{display:false},datalabels:{display:false}}
+      }
+    }));
+  })();
+}
+
+// ===== Back to top =====
+(function(){
+  const btn=document.getElementById('toTop');
+  window.addEventListener('scroll',function(){
+    btn.style.display=(window.scrollY>600)?'flex':'none';
+  });
+  btn.addEventListener('click',function(){ window.scrollTo({top:0,behavior:'smooth'}); });
+})();
+
+// ===== KPI count-up on view =====
+(function(){
+  const els=document.querySelectorAll('.metric .val');
+  const parse=function(t){
+    const m=t.match(/^([$€£]?)\s?([\d.,]+)/);
+    if(!m) return null;
+    return {prefix:m[1], num:parseFloat(m[2].replace(/,/g,''))};
+  };
+  const io=new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(!e.isIntersecting) return;
+      const el=e.target, orig=el.textContent, p=parse(orig);
+      if(!p || p.num>9999999){ el.textContent=orig; io.unobserve(el); return; }
+      const dur=900, t0=performance.now();
+      const tick=function(t){
+        const k=Math.min(1,(t-t0)/dur), v=Math.round(p.num*(1-Math.pow(1-k,3)));
+        el.textContent=p.prefix+(p.num%1!==0 ? v.toFixed(1) : v.toLocaleString('en-US'));
+        if(k<1) requestAnimationFrame(tick); else el.textContent=orig;
+      };
+      requestAnimationFrame(tick);
+      io.unobserve(el);
+    });
+  },{threshold:.4});
+  els.forEach(function(el){ io.observe(el); });
+})();
+
+// ===== Init =====
+(function(){
+  try{
+    const th=localStorage.getItem('if_theme');
+    if(th==='dark'||th==='light') document.documentElement.setAttribute('data-theme',th);
+  }catch(e){}
+  let saved='en';
+  try{ saved=localStorage.getItem('if_lang')||'en'; }catch(e){}
+  setLang(saved);
+})();
+</script>
+</body>
+</html>
