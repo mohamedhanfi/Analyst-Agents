@@ -1,0 +1,16 @@
+﻿# secrets — never committed
+.env
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# run isolation — only run outputs are ignored; template is tracked
+runs/*
+!runs/.gitkeep
+!runs/_template/
+
+# cache (idempotency + run index)
+cache/*
+!cache/.gitkeep

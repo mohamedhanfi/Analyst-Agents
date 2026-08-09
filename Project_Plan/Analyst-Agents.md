@@ -1,6 +1,6 @@
 # Insight Forge — Implementation Guide
 
-**Version:** 4.0.0 · **For:** Development Team · **Status:** Production-oriented (not production-ready — §7)
+**Version:** 4.3.0 · **For:** Development Team · **Status:** Production-oriented (not production-ready — §7)
 
 ---
 
@@ -57,7 +57,7 @@ Branches:
 | Max file size | 200 MB (reject above) |
 | Max rows | 5,000,000 (above → **chunked processing**, not rejection; see below) |
 | Max columns | 10,000 |
-| Max chart count | 20 |
+| Max chart count | 20 (chart_planner ranks all candidates by evidence strength/LLM re-rank reason; **excess candidates beyond 20 are dropped, lowest-ranked first**, and logged as `charts_truncated: true` in `chart_metadata.json`) |
 | Per-stage timeout | 600 s (default, `config.yaml`) — exceeded → retry/fail that stage |
 | Per-run LLM cost cap | `config.yaml` `max_cost_usd` (default 5.00) — hard stop + fallback |
 | Per-agent token cap | `config.yaml` `max_tokens_per_agent` (default 50k in/out) |
@@ -72,7 +72,7 @@ Branches:
 - Every LLM-deciding stage below = one CrewAI **Agent** (`role`/`goal`/`backstory`) with CrewAI **Tasks**
 - All computation = CrewAI **Tools** (Python `@tool` wrappers)
 - Branching = CrewAI **Flows** (`@flow`/`@router`)
-- Deterministic stages (Data Quality) are **Flow steps** — Python only, no LLM call; implemented in `agents/data_quality_agent.py`, invoked by `crew/flows.py`
+- Deterministic stages (Data Quality) are **Flow steps** — Python only, no LLM call; implemented in `agents/data_quality.py` (kept alongside the other agent modules for a single agents/ folder, even though it's Engine-only — no LLM), invoked by `crew/flows.py`
 - Models per agent set in the single root `config.yaml`
 - **QA must use a different model than generation** (§2.8)
 
@@ -121,6 +121,16 @@ Branches:
 
 **Notes:** stop on unsupported format / empty or < 5 rows / user cancel / fail after **3 retries** (see §1 hard limits). Cell content = **UNTRUSTED DATA**. Question timeout 5 min → *Generic Analysis Mode* (§3.5).
 
+**Tasks (`agents/ingestion_agent.py`):**
+
+| Task | Does |
+|------|------|
+| `validate_and_extract` | runs deep validation, reads the file, merges sheets if needed |
+| `profile_dataset` | builds `data_profile.json` (shape, dtypes, nulls, duplicates, PII flags) |
+| `gather_business_context` | asks sheet-choice + business questions via HumanInputTool, interprets answers into `business_context.json` |
+
+**Tools used:** `file_validator_tool` (extension + MIME + signature) · `file_reader_tool` (pandas/openpyxl, chunked above 5M rows) · `data_profiler_tool` · `pii_detector_tool` · `human_input_tool`
+
 ---
 
 ### 2.2 Agent 2: Data Understanding
@@ -145,7 +155,17 @@ object & nunique > 50         → free_text
 
 LLM may reclassify by name (e.g. numeric `zip_code` → identifier).
 
-> **Planning is a subtask of this same stage** — implemented by `planner_agent.py`, but it is **not** a 9th agent; it is a second Crew task of the Understanding Agent producing the DSL plan.
+> **Planning is a subtask of this same stage** — implemented as a second Crew Task inside `understanding_agent.py` (not a separate module), since it is **not** a 9th agent; it is a second Crew task of the Understanding Agent producing the DSL plan.
+
+**Tasks (Understanding Agent, `agents/understanding_agent.py`):**
+
+| Task | Does |
+|------|------|
+| `classify_column_roles` | reviews Python's rule-based role output, reclassifies by name/semantics where rules are ambiguous (e.g. numeric `zip_code` → identifier) |
+| `detect_domain_and_entities` | infers `detected_domain`, `domain_confidence`, business entities from profile + sample |
+| `build_analysis_plan` | proposes candidate KPIs (DSL only) + statistical tests → `analysis_plan.json` |
+
+**Tools used:** `column_profiler_tool` (`nunique`, `head`, dtype/role rules) · `domain_classifier_tool` · `dsl_plan_builder_tool` (validates against `shared/dsl_validator.py` whitelist before returning)
 
 **Input:** `data_profile.json` · `business_context.json` · 20-row sample
 **Output:**
@@ -206,6 +226,8 @@ Checks: schema · invalid values (impossible dates, negative revenue, % >100, `a
 
 Rule: **Repair never invents data.** It only casts types, drops exact duplicates and impossible rows, and preserves/records everything else for Cleaning to decide.
 
+**Tools used (`agents/data_quality.py`, no CrewAI Task — plain functions called from `crew/flows.py`):** `schema_checker_tool` · `invalid_value_checker_tool` · `missingness_analyzer_tool` (MCAR/MAR/MNAR) · `duplicate_detector_tool` · `referential_integrity_tool` · `deterministic_repair_tool`
+
 ---
 
 ### 2.4 Agent 4: Cleaning
@@ -230,10 +252,20 @@ Rule: **Repair never invents data.** It only casts types, drops exact duplicates
 
 **Input:** DQ report · understanding · profile · raw data
 **Output:**
-- `runs/<run_id>/data/processed/cleaned_data.csv`
-- `runs/<run_id>/metadata/cleaning_result.json` (pre/post rows, dupes removed, type casts, flags created, outliers)
+- `runs/<run_id>/data/processed/cleaned_data.csv` — always the **latest accepted attempt**; on a re-run the previous attempt is kept as `cleaned_data_attempt_<n>.csv` (not overwritten silently), so the lineage trail required by §3.3 stays intact even when Cleaning takes 2-3 tries to pass the DQ re-check
+- `runs/<run_id>/metadata/cleaning_result.json` (pre/post rows, dupes removed, type casts, flags created, outliers, `attempt: <n>`)
 
-**Notes:** result validation re-runs DQ on cleaned output → `passed` or re-run Cleaning.
+**Notes:** result validation re-runs DQ on cleaned output → `passed` or re-run Cleaning (max 3 attempts, §1). Each attempt is numbered and logged; only the final passing attempt's `cleaned_data.csv` feeds Analysis.
+
+**Tasks (`agents/cleaning_agent.py`):**
+
+| Task | Does |
+|------|------|
+| `decide_cleaning_strategy` | picks the fill/drop/flag strategy per column, per the role×missingness table above (JSON output) |
+| `execute_cleaning` | hands the strategy to Python for execution + logging |
+| `recheck_data_quality` | re-runs Agent 3's checks on the cleaned output; loops back on `FAIL` (max 3 re-runs, §1) |
+
+**Tools used:** `cleaning_strategy_tool` (LLM) · `fillna_tool` · `flag_column_tool` (`*_missing_flag`) · `type_caster_tool` · `dedup_tool` · `iqr_outlier_tool` · `dq_recheck_tool` (calls `agents/data_quality.py`)
 
 ---
 
@@ -328,6 +360,16 @@ Falling back if the data is too thin: planner downgrades to a simple bar or a ta
 
 **Rule:** Python always aggregates on **all rows**; sampling is for LLM/UX inspection only. Every computed value gets an evidence_id.
 
+**Tasks (`agents/analyst_agent.py`):**
+
+| Task | Does |
+|------|------|
+| `select_kpis` | picks which candidate KPIs from the plan are worth computing given the cleaned data |
+| `run_dsl_and_stats` | hands DSL ops + relevant statistical tests to Python for execution |
+| `rank_chart_candidates` | reviews `chart_planner` output, may re-rank with a written reason (shape/draw stays Python's call) |
+
+**Tools used:** `dsl_executor_tool` (whitelist only, via `shared/dsl_validator.py`) · `statistical_suite_tool` (scipy/statsmodels) · `chart_planner_tool` (`analysis/chart_planner.py`) · `chart_renderer_tool` (matplotlib/seaborn) · `evidence_registry_tool` (`analysis/evidence.py` — the only writer)
+
 **Chart accessibility:**
 - **Color-blind safe palettes** — use `seaborn` colorblind / Okabe-Ito; never red-green as the only encoding.
 - **Pattern + label redundancies** — bar/pie also label values; line charts get markers, not color-only.
@@ -379,6 +421,16 @@ Falling back if the data is too thin: planner downgrades to a simple bar or a ta
 
 **Validation before saving:** non-empty evidence_ids · refs exist in registry · claim matches evidence types · recommendation → references only existing insights. Any failure → remove + log.
 
+**Tasks (`agents/insight_agent.py`):**
+
+| Task | Does |
+|------|------|
+| `generate_insights` | writes evidence-grounded insights per the claim taxonomy |
+| `build_recommendations` | Observation → Finding → Implication → hedged recommendation chain |
+| `validate_claims` | checks evidence_ids/refs/claim-type match before saving; strips failures |
+
+**Tools used:** `evidence_lookup_tool` (reads `evidence_registry.json`) · `claim_validator_tool` · `human_input_tool` (optional review checkpoint, `review_required: true`)
+
 **Human review checkpoint (optional, `config.yaml` `review_required: true`):** after `insights.json` is validated, the pipeline can pause and present the insights to a human analyst (HumanInputTool / web panel). The analyst can **approve**, **edit text** (edits must keep `evidence_ids` intact — the claim validator re-runs), or **request regeneration** (→ Insights re-run, bounded by retry caps). If approved or `review_required: false`, it proceeds to Report. This is a review gate, not a second LLM.
 
 ---
@@ -393,8 +445,17 @@ Falling back if the data is too thin: planner downgrades to a simple bar or a ta
 
 **Security (in render):** Jinja `autoescape=True`, HTML sanitizer, CSP header. Never render cells raw.
 
-**Input:** all `runs/<run_id>/outputs/`, `runs/<run_id>/metadata/`, `runs/<run_id>/knowledge/` files · `templates/report_template.html`
+**Input:** all `runs/<run_id>/outputs/`, `runs/<run_id>/metadata/`, `runs/<run_id>/knowledge/` files · `resources/report_template.html`
 **Output:** `runs/<run_id>/report.html`, `runs/<run_id>/metadata/report_result.json`
+
+**Tasks (`agents/report_agent.py`):**
+
+| Task | Does |
+|------|------|
+| `render_report` | Python renders every section from the run's JSONs into `resources/report_template.html` |
+| `write_executive_summary` | LLM writes **only** the 3-5 sentence executive summary |
+
+**Tools used:** `html_renderer_tool` (jinja2, `autoescape=True`) · `html_sanitizer_tool` · `locale_formatter_tool` (babel, per §2.5 localization) · `chart_embed_tool` (alt-text captions from chart metadata)
 
 ---
 
@@ -427,6 +488,17 @@ score = 100 – (critical×15) – (warnings×2.5) – (info×0.5)   [floor 0]
 
 **Output:** `runs/<run_id>/metadata/qa_verdict.json`
 
+**Tasks (`agents/qa_agent.py`):**
+
+| Task | Does |
+|------|------|
+| `recompute_kpis` | Python recomputes 100% of KPIs from cleaned data, compares to reported values (tolerance 0.01%) |
+| `validate_structure` | checks refs valid, charts exist, HTML sections complete, manifest fallback flags |
+| `review_logic_and_readability` | independent LLM (different model than generation, §2.8) checks insight/recommendation alignment + summary readability |
+| `compute_verdict` | applies the deterministic score formula + verdict table — no LLM in the decision itself |
+
+**Tools used:** `kpi_recomputation_tool` · `reference_validator_tool` · `score_calculator_tool` · `verdict_tool`
+
 ---
 
 ## 3. Guardrails (rules that hold the whole system together)
@@ -450,6 +522,20 @@ If business questions time out → Generic Mode with `context_confidence: 0`, re
 
 ## 4. File Structure
 
+> **v4.2 cleanup — changes from v4.0:**
+> 1. `planner_agent.py` merged into `understanding_agent.py` — §2.2 already states planning is a *second Task of the same Agent, not a 9th agent*; giving it its own file contradicted that and implied a module that doesn't independently exist.
+> 2. `templates/` + `fixtures/` merged into one `resources/` — both were read-only static assets at the root; two folders for the same concern was unnecessary.
+> 3. `data_quality_agent.py` renamed `data_quality.py` and **kept in `agents/`** (one folder for all pipeline stages, incl. the deterministic ones) — it's still called out as Engine-only/no-LLM everywhere it's referenced, so the distinction lives in the docs and in `crew/flows.py` wiring, not in a folder split.
+> 4. Added `shared/logger.py` — the "structured log per stage" in §5 had no owning module.
+>
+> Net effect: `agents/` drops from 9 files to 8 (planner merged away), and top-level read-only dirs go from 2 to 1.
+>
+> **v4.3 — logical fixes (not structural):**
+> 5. §5 caching rule rewritten — the old rule said Cleaning/Analysis were reusable whenever "only business context differs," which contradicted §1 (both call an LLM) and ignored that Analysis consumes the plan Understanding produces. Reuse is now keyed on **plan-hash equality**, not on "context changed y/n" (§5).
+> 6. §6 golden datasets — the single `Expected: revenue=10,000...` line read as if it applied to all 8 fixtures; replaced with a per-fixture table so each fixture's assertion is unambiguous.
+> 7. §1 `Max chart count` — added the truncation rule for when candidates exceed 20.
+> 8. §2.4 Cleaning output — re-run attempts are now versioned (`cleaned_data_attempt_<n>.csv`) instead of silently overwritten, so lineage (§3.3) holds even when Cleaning takes multiple tries.
+
 ```
 insight-forge/
 ├── main.py                     # entry — builds Crew, runs Flow
@@ -459,16 +545,15 @@ insight-forge/
 ├── crew/
 │   ├── crew.py                 # CrewAI Agents + Tasks in order
 │   └── flows.py                # DQ gate, Cleaning re-check, QA verdict branches; invokes deterministic stages
-├── agents/                     # one module per §2 stage (Data Quality runs as a deterministic Flow step)
-│   ├── ingestion_agent.py
-│   ├── understanding_agent.py      # stage 2 — roles + domain
-│   ├── planner_agent.py            # stage 2 subtask — builds the DSL analysis plan (same Agent as understanding)
-│   ├── data_quality_agent.py       # stage 3 — deterministic (no LLM), invoked by flows.py
-│   ├── cleaning_agent.py
-│   ├── analyst_agent.py
-│   ├── insight_agent.py
-│   ├── report_agent.py
-│   └── qa_agent.py
+├── agents/                     # one module per §2 stage, all 8 stages together
+│   ├── ingestion_agent.py      # stage 1
+│   ├── understanding_agent.py  # stage 2 — roles + domain + DSL plan (planning is its 2nd Task, not a separate file)
+│   ├── data_quality.py         # stage 3 — Engine only, no LLM (deterministic Flow step, invoked by flows.py — see §1)
+│   ├── cleaning_agent.py       # stage 4
+│   ├── analyst_agent.py        # stage 5
+│   ├── insight_agent.py        # stage 6
+│   ├── report_agent.py         # stage 7
+│   └── qa_agent.py             # stage 8
 ├── analysis/                   # pure computation, no LLM
 │   ├── chart_planner.py        # §2.5 data-shape rule table → chart kind + reason (deterministic)
 │   ├── evidence.py             # evidence_id minting + evidence_registry read/write (the only writer)
@@ -477,19 +562,21 @@ insight-forge/
 ├── shared/
 │   ├── tools.py                # CrewAI @tool wrappers
 │   ├── schemas.py              # Pydantic
-│   ├── dsl_validator.py        # whitelist / DSL
+│   ├── dsl_validator.py        # whitelist / DSL — used by both understanding_agent (build) and analyst_agent (execute)
+│   ├── logger.py               # writes runs/<run_id>/logs/ — LLM latency/tokens/cost + tool calls + retries (§5 structured log)
 │   └── utils.py                # config load (config.yaml + env), run_id allocator
-├── templates/                  # read-only: report_template.html
-├── fixtures/                   # read-only: static business-context templates (renamed from knowledge/)
+├── resources/                  # read-only static assets (merged templates/ + fixtures/)
+│   ├── report_template.html    # (was templates/report_template.html)
+│   └── business_context/       # static business-context templates (was fixtures/, itself renamed from knowledge/)
 ├── runs/                       # run isolation — the only writable surface per run
 │   └── <run_id>/               # extracted + processed data, all outputs, logs, manifest
 │       ├── data/               # raw/ extracted/ processed/
-│       ├── knowledge/          # business_context.json (per-run Agent 1 output)
+│       ├── knowledge/          # business_context.json (per-run Agent 1 output — distinct from resources/business_context/, which is the static template)
 │       ├── metadata/           # data_profile · dataset_understanding · analysis_plan · data_quality_report · cleaning_result · chart_metadata · report_result · qa_verdict
 │       ├── outputs/            # report.html · kpis.json · statistical_results.json · insights.json · evidence_registry.json · run_comparison.json · charts/
 │       ├── logs/               # LLM/tool logs
 │       └── master_manifest.json
-├── cache/                      # key→run_id index (idempotency) + source_name→run_ids index (run comparison) (§5)
+├── cache/                      # key→run_id index (idempotency) + source_name→run_ids index (run comparison) (§5) — kept separate from runs/: different retention lifecycle (§5)
 └── tests/      → unit/ integration/ regression/ security/ statistical/ agent/ e2e/ golden/ fixtures/
 ```
 
@@ -509,7 +596,7 @@ Each run gets a unique `run_id` (`run_<timestamp>_<seq>`) and writes **only** to
 
 - **Scope:** one pipeline run = **its own sub-directory + own Crew instance**. Two runs never touch the same files.
 - **Concurrency:** safe to launch many runs in parallel. Python-side (pandas/matplotlib) is process-local; no global temp dirs, no shared in-memory state.
-- **Locking:** only the output root (`runs/`) needs a lightweight `run_id` allocator (atomic `mkdir`); read of shared fixtures (`fixtures/`, `templates/`) is read-only and safe concurrently.
+- **Locking:** only the output root (`runs/`) needs a lightweight `run_id` allocator (atomic `mkdir`); reads of shared static assets (`resources/`) are read-only and safe concurrently.
 - **Teardown:** `logs/` per run; retention policy (configurable) deletes old runs.
 
 ### Caching & idempotency
@@ -518,7 +605,12 @@ Re-running the **same input** is detectable and parts of it are skipped instead 
 
 - **Cache key** = `sha256(file_bytes)` + `config_version` + `prompt_version` + model ids. Stored in a `cache/` index (key → run_id; plus `source_name` → run_ids for run comparison).
 - **Full-file hit:** if the same `input_hash` + effective-config already produced an `APPROVED` run, the orchestrator returns that run's report/`run_comparison` directly (with a `cached: true` marker) — no LLM calls, no recompute.
-- **Partial hits:** deterministic stages (Data Quality, Cleaning, Analysis) can be reused when only the business-context answers differ; LLM-heavy stages (Understanding/plan, Insights, Summary) are re-run.
+- **Partial hits, precisely defined:** reuse is keyed on **what actually changed**, not on a blanket "context differs" rule — because Cleaning and Analysis both call an LLM (§1 table) and both consume the DSL plan, so "business context differs" alone doesn't make them safe to reuse:
+  - **Ingestion (extraction + profile only, not PII/business-rule interpretation)** — always reusable on a full `input_hash` hit; it never reads business context.
+  - **Data Quality's schema/type/duplicate checks** — reusable, since those don't depend on business context. Its **business-rules checks are re-run** whenever `business_context.json` changes, since that's a declared input (§2.3).
+  - **Understanding/plan** — re-run whenever business context changes (unchanged from before), since domain/entities/candidate KPIs depend on it.
+  - **Cleaning, Analysis** — reusable **only if the analysis_plan.json produced this run is byte-identical to the cached run's plan** (checked by hashing the plan, not by checking whether context changed) — since Analysis consumes the plan directly and Cleaning's strategy can reference plan-selected columns. If the plan hash differs, both re-run.
+  - **Insights, Summary** — always re-run when upstream KPIs/evidence differ, or when `review_required` regeneration is requested.
 - Idempotency guarantee: same key + same inputs → same outputs (deterministic stages deterministic; LLM stages reproducible via `temperature: 0` + `seed`, logged in manifest).
 - Cache is **never** the source of truth for QA — QA always recomputes from current files when a run is delivered fresh.
 
@@ -560,12 +652,20 @@ Policy is enforced by a `retention` block in `config.yaml` (days per category) +
 | security | injection, XSS, malformed files |
 | e2e on golden datasets | full pipeline matches ground truth |
 
-**Golden datasets** (fixtures with precomputed truth):
-```
-sales_small · sales_missing · sales_outliers ·
-sales_duplicates · sales_injection · sales_pii · hr · finance
-Expected: revenue = 10,000 · orders = 100 · AOV = 100
-```
+**Golden datasets** (fixtures with precomputed truth, `tests/golden/fixtures/`):
+
+| Fixture | Base data | What it tests | Expected (post-pipeline) |
+|---|---|---|---|
+| `sales_small` | clean, no issues | baseline correctness | revenue = 10,000 · orders = 100 · AOV = 100 |
+| `sales_missing` | `sales_small` + injected MCAR/MAR gaps | missingness detection + Cleaning strategy | same totals as `sales_small` after `flag_and_preserve`/impute — flags column count also asserted |
+| `sales_outliers` | `sales_small` + injected extreme values | IQR outlier handling | pre/post outlier counts asserted; totals must NOT match `sales_small` (outliers are excluded, not zeroed) |
+| `sales_duplicates` | `sales_small` + exact duplicate rows | DQ `drop_duplicates()` | totals collapse back to `sales_small` values after dedup |
+| `sales_injection` | `sales_small` + SQL/script strings in cells | security suite (cell content = untrusted data) | pipeline completes with content neutralized; no code execution, no unescaped HTML in report |
+| `sales_pii` | `sales_small` + email/phone columns | PII detection + redaction | `pii_columns` populated in profile; PII absent from LLM context and logs |
+| `hr` | independent domain fixture | domain detection + HR-specific KPIs | `detected_domain: "hr"`, domain-appropriate candidate_kpis |
+| `finance` | independent domain fixture | domain detection + finance-specific KPIs | `detected_domain: "finance"`, domain-appropriate candidate_kpis |
+
+Each derived fixture (`sales_missing`, `sales_outliers`, `sales_duplicates`, `sales_injection`, `sales_pii`) starts from `sales_small` with one problem class injected, so QA's "does the pipeline still recover the true totals" check has a fixed baseline to compare against.
 
 **Safety checks:** cases actively poisoned with wrong numbers / missing evidence → QA must never approve (false-approval =0).
 
