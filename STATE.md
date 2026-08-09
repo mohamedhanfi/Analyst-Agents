@@ -1,6 +1,6 @@
 # STATE — حالة المشروع الإجمالية
 
-> آخر تحديث: أغسطس 2026
+> آخر تحديث: أغسطس 2026 — بعد مراجعة شاملة في 09/08/2026
 > تقدير الاكتمال الكلي: **≈ 30%** (البنية التحتية جاهزة، أما الوكلاء والتحليل فلم يبدأوا بعد)
 
 ---
@@ -11,7 +11,8 @@
 |---|---|---|
 | `shared/core/` (المنطق النقي) | ✅ مكتمل | 100% |
 | `shared/tools/` (أدوات CrewAI) | ✅ مكتمل | 100% |
-| `shared/` (schemas · utils · logger · dsl_validator) | ✅ مكتمل | 100% |
+| `shared/` (schemas · utils · logger) | ✅ مكتمل | 100% |
+| `shared/dsl_validator.py` | ⚠️ **فارغ (0 سطر) — يُنفَّذ مع المرحلة 2** | 0% |
 | الاختبارات الوحدوية | ✅ 32 اختبارًا مجتازًا | 100% |
 | `config.yaml` + `PROJECT_STRUCTURE.md` | ✅ محدَّث | 90% |
 | `agents/` (6 وكلاء) + `crew/` + `main.py` | ❌ ملفات فارغة (stubs) | 0% |
@@ -39,15 +40,16 @@ shared/
 │   ├── profiling.py         # pii_detector_tool · data_profiler_tool
 │   └── human.py             # human_input_tool
 ├── schemas.py               # نماذج Pydantic لكل المخرجات
-├── dsl_validator.py         # القائمة البيضاء / DSL
+├── dsl_validator.py         # ⚠️ فارغ — القائمة البيضاء / DSL (مع المرحلة 2)
 ├── logger.py                # سجلات منظمة لكل run
 └── utils.py                 # config + run_id + حساب SHA
 ```
 
 **مبادئ ثابتة وأُنجزت:** golden rule (الـ LLM يقرر، Python ينفذ) · حجم الملف يُحسب من القرص · لا ثقة بالمدخلات · PII يُخفى من كل العينات · الأعمدة الرقمية/الزمنية ليست PII.
 
-### الاختبارات — ✅ 32 مجتازًا
-`test_file_validator` (7) · `test_reader` (6) · `test_pii` (5) · `test_profiler` (4) · `test_business_context` (5) · `test_dsl_validator` (5)
+### الاختبارات — ✅ 32 مجتازًا (الأرقام الفعلية بعد المراجعة)
+`test_file_validator` (10) · `test_reader` (7) · `test_pii` (6) · `test_business_context` (5) · `test_profiler` (4)
+> لا يوجد `test_dsl_validator` — الـ DSL غير مطبَّق بعد.
 
 ---
 
@@ -75,6 +77,23 @@ shared/
 - `report_template.html` (قالب فقط)
 - اختبارات agent/integration/e2e/golden + تجربة Fixtures حقيقية
 - ❗ **Commit** التغييرات الحالية (كلها في working tree بدون commit)
+
+---
+
+## 🔍 نتائج مراجعة 09/08/2026
+
+### أُصلح خلال المراجعة (كلها في working tree، لم تُرتكب بعد)
+1. `shared/logger.py` — كان يستخدم `os.PathLike` بدون `import os` → أضيف الاستيراد
+2. أدوات فحص الملفات كانت تفشل بدون مفتاح LLM → `load_config(require_key=False)` لأدوات الحساب الخالص
+3. `pyproject.toml` كان يستبعد `shared.core` و `shared.tools` من الحزمة → أُدرجا ضمن `packages`
+4. عدّ صفوف XLSX في `FileValidator` كان عبر `max_row` غير الموثوق → عدّ صريح مطابق لـ `FileReader`
+
+### ملاحظات مؤجلة عمدًا (سجّل للتنفيذ لاحقًا)
+- `shared/dsl_validator.py` فارغ تمامًا (0 سطر) — يُنفَّذ مع المرحلة 2 (أدوات الفهم)
+- `business_context._recompute_deadline` دالة لا تفعل شيئًا (تعيد نفس القيمة) — تنظيف اختياري
+- قراءة >5M سطر (تقطيع chunked) غير مطبَّقة بعد — الحدود معرّفة في `config.yaml` فقط
+- `schemas.py` يغطي المراحل 1–4 فقط — نماذج المراحل 5–6 (KPIs · إحصاءات · رؤى · توصيات · تقرير) تُضاف مع وكلائها
+- حساب SHA للملف مكرر داخل `FileReader._calculate_hash` ولا حاجة لدالة عامة في `utils` — ترك كما هو عمدًا
 
 ---
 

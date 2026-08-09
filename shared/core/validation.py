@@ -154,7 +154,10 @@ class FileValidator:
             try:
                 wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
                 try:
-                    rows = max((ws.max_row or 0) for ws in wb.worksheets)
+                    # Same counting as FileReader — openpyxl max_row can be
+                    # stale in read_only mode, so count explicitly.
+                    rows = max(sum(1 for _ in ws.iter_rows(values_only=True))
+                               for ws in wb.worksheets)
                     return rows, True, None
                 finally:
                     wb.close()

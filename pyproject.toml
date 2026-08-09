@@ -24,4 +24,5 @@ dependencies = [
 insight-forge = "main:main"
 
 [tool.setuptools]
-packages = ["crew", "agents", "analysis", "shared"]
+packages = ["crew", "agents", "analysis", "shared",
+            "shared.core", "shared.tools"]

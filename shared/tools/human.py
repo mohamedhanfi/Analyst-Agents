@@ -19,7 +19,7 @@ def human_input_tool(prompt: str) -> str:
     {"answer": "..."} or {"timed_out": true, "generic_mode": true}
     when the user does not answer in time (§3.5 Generic Analysis Mode).
     """
-    cfg = load_config()
+    cfg = load_config(require_key=False)
     timeout_min = float(cfg["limits"].get("human_input_timeout_min", 5.0))
     gatherer = BusinessContextGatherer(timeout_seconds=int(timeout_min * 60))
     answer = gatherer._ask(prompt, time.monotonic() + timeout_min * 60)

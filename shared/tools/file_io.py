@@ -11,7 +11,7 @@ from shared.utils import load_config
 
 
 def _file_validator() -> FileValidator:
-    cfg = load_config()
+    cfg = load_config(require_key=False)
     limits = cfg.get("limits", {})
     return FileValidator(
         max_file_size_mb=float(limits.get("max_file_size_mb", 200.0)),

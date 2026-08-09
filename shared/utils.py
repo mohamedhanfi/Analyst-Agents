@@ -21,10 +21,13 @@ RUN_SUBDIRS = ("data/raw", "data/extracted", "data/processed",
                "knowledge", "metadata", "outputs/charts", "logs")
 
 
-def load_config(path: str | os.PathLike | None = None) -> Dict[str, Any]:
+def load_config(path: str | os.PathLike | None = None,
+                require_key: bool = True) -> Dict[str, Any]:
     """Load config.yaml, merge env values, resolve the API key.
 
-    Raises RuntimeError if the configured API key env var is missing/empty.
+    Raises RuntimeError if require_key and the configured API key env
+    var is missing/empty. Tools that are pure computation (file
+    validation, reader) pass require_key=False — they need limits only.
     """
     load_dotenv(ROOT_DIR / ".env")
     cfg_path = Path(path) if path else CONFIG_PATH
@@ -34,7 +37,7 @@ def load_config(path: str | os.PathLike | None = None) -> Dict[str, Any]:
     llm = cfg.setdefault("llm", {})
     key_env = llm.get("api_key_env", "OPENROUTER_API_KEY")
     api_key = os.getenv(key_env, "").strip()
-    if not api_key:
+    if require_key and not api_key:
         raise RuntimeError(
             f"Missing API key: env var '{key_env}' is empty. "
             f"Copy .env.example to .env and fill it in."
