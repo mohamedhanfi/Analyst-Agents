@@ -31,11 +31,20 @@ insight-forge/
 │   ├── generic/                # descriptive · correlation · distribution · trend
 │   └── domains/                # sales · finance · marketing · hr · operations
 ├── shared/
-│   ├── tools.py                # CrewAI @tool wrappers
-│   ├── schemas.py              # Pydantic models
-│   ├── dsl_validator.py        # whitelist / DSL — used by both understanding (build) and analyst (execute)
-│   ├── logger.py               # structured logs to runs/<run_id>/logs/ — latency/tokens/cost + tool calls + retries
-│   └── utils.py                # config load (config.yaml + env) + run_id allocator
+│   ├── core/                    # pure logic, no CrewAI — the unit-testable layer
+│   │   ├── validation.py        # FileValidator (ext/MIME/signature/parse/rows)
+│   │   ├── reader.py            # FileReader (discovery + extract_sheet, streamed)
+│   │   ├── profiler.py          # DataProfiler (profile + samples, PII-redacted)
+│   │   ├── pii.py               # PiiDetector (rule-based, no LLM)
+│   │   └── business_context.py  # BusinessContextGatherer (dialog + generic mode)
+│   ├── tools/                   # CrewAI @tool wrappers, aggregated in __init__.py
+│   │   ├── file_io.py           # file_validator_tool · file_reader_tool · file_sheet_extract_tool
+│   │   ├── profiling.py         # pii_detector_tool · data_profiler_tool
+│   │   └── human.py             # human_input_tool
+│   ├── schemas.py               # Pydantic models
+│   ├── dsl_validator.py         # whitelist / DSL — used by both understanding (build) and analyst (execute)
+│   ├── logger.py                # structured logs to runs/<run_id>/logs/ — latency/tokens/cost + tool calls + retries
+│   └── utils.py                 # config load (config.yaml + env) + run_id allocator
 ├── resources/                  # read-only static assets
 │   ├── report_template.html    # HTML report template
 │   └── business_context/       # static business-context templates
@@ -97,7 +106,8 @@ insight-forge/
 
 | File | Contents |
 |---|---|
-| `tools.py` | All CrewAI `@tool` wrappers for the stages. Every computation/file op lives here (Golden Rule: LLM decides, Python executes). Cell content = **UNTRUSTED** — never passes to the model. |
+| `core/` | Pure logic, no CrewAI — every computation/file op (Golden Rule: LLM decides, Python executes). `validation.py` · `reader.py` · `profiler.py` · `pii.py` · `business_context.py`. |
+| `tools/` | All CrewAI `@tool` wrappers — thin adapters over `core/`, aggregated in `__init__.py`. Cell content = **UNTRUSTED** — never passes to the model. `file_io.py` · `profiling.py` · `human.py`. |
 | `schemas.py` | Pydantic models for every JSON artifact (data_profile, dataset_understanding, analysis_plan, cleaning_result, …). |
 | `dsl_validator.py` | DSL whitelist + validator — **dual use**: Understanding builds, Analyst executes. Defines: `sum mean median count nunique min max std growth correlation ratio` + their parameters. |
 | `logger.py` | Owner of the structured per-stage log: writes `runs/<run_id>/logs/` — LLM latency/tokens/cost, tool calls, retries (§5). |

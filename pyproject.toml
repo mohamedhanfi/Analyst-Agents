@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "insight-forge"
+version = "0.1.0"
+description = "LLM-driven business analysis pipeline — Insight Forge"
+requires-python = ">=3.11"
+dependencies = [
+    "crewai>=1.15,<2",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "statsmodels>=0.14",
+    "openpyxl>=3.1",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "jinja2>=3.1",
+    "babel>=2.14",
+]
+
+[project.scripts]
+insight-forge = "main:main"
+
+[tool.setuptools]
+packages = ["crew", "agents", "analysis", "shared"]
