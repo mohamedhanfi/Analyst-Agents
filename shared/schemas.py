@@ -126,7 +126,7 @@ class DslOperation(BaseModel):
     method: Optional[Literal["pearson", "spearman"]] = None
     over_column: Optional[str] = None             # growth
     period: Optional[Literal["YoY", "MoM", "WoW"]] = None
-    basis: Optional[Literal["previous_period", "start_of_period"]] = "previous_period"
+    basis: Optional[Literal["previous_period", "start_of_period"]] = None  # None => executor applies "previous_period"
     as_percent: Optional[bool] = None
     group_by: Optional[List[str]] = None
     filter: Optional[Dict[str, Any]] = None
@@ -177,3 +177,136 @@ class CleaningResult(BaseModel):
     flags_created: List[str] = Field(default_factory=list)
     outliers: Dict[str, int] = Field(default_factory=dict)
     status: Literal["passed", "failed"] = "passed"
+
+
+# ---------------------------------------------------------------------------
+# Stage 5 — Analysis (§2.5)
+# ---------------------------------------------------------------------------
+
+ChartKind = Literal["bar", "barh", "line", "doughnut",
+                    "histogram", "scatter", "heatmap"]
+
+
+class KpiResult(BaseModel):
+    """One computed KPI in outputs/kpis.json.
+
+    value is a float for measures, int for counts, and may be a str when a
+    min/max lands on a temporal column; None when the computation failed.
+    """
+    kpi_id: str
+    name: str
+    operation: DslOperation
+    value: float | int | str | None = None
+    evidence_id: str | None = None
+    computed_by: str = "pandas"
+
+
+class StatisticalResult(BaseModel):
+    """One result in outputs/statistical_results.json.
+
+    extra carries test-specific fields (F, df, eta^2, groups compared, ...)
+    that do not fit the common surface — tightened when the suite lands.
+    """
+    test_id: str
+    category: str
+    test_name: str
+    variables: List[str] = Field(default_factory=list)
+    statistic: float | None = None
+    p_value: float | None = None
+    ci_low: float | None = None
+    ci_high: float | None = None
+    effect_size: float | None = None
+    n: int | None = None
+    evidence_id: str | None = None
+    extra: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ChartMetadata(BaseModel):
+    """One planner decision in metadata/chart_metadata.json (shape rule hit)."""
+    chart_id: str
+    kind: ChartKind
+    reason: str
+    columns: List[str] = Field(default_factory=list)
+    title: str = ""
+    reliability: str | None = None     # "low_n" when the planner downgrades
+    chart_path: str | None = None
+    evidence_id: str | None = None
+    computed_by: str = "pandas"
+
+
+class EvidenceSource(BaseModel):
+    """Full lineage of one computed value (§2.6)."""
+    file_hash: str | None = None
+    sheet: str | None = None
+    transformations: List[str] = Field(default_factory=list)
+    filter: str | None = None
+    aggregation: str | None = None
+    comparison: str | None = None
+    result: Any | None = None
+
+
+class EvidenceEntry(BaseModel):
+    """One row of outputs/evidence_registry.json."""
+    evidence_id: str
+    source: EvidenceSource
+
+
+# ---------------------------------------------------------------------------
+# Stage 6 — Insights & Recommendations (§2.6)
+# ---------------------------------------------------------------------------
+
+ClaimType = Literal["DESCRIPTIVE", "COMPARATIVE", "CORRELATIONAL",
+                    "PREDICTIVE", "CAUSAL"]
+
+
+class Insight(BaseModel):
+    """One evidence-grounded insight in outputs/insights.json."""
+    insight_id: str
+    claim_type: ClaimType
+    title: str
+    description: str
+    confidence: Literal["high", "medium", "low"]
+    evidence_ids: List[str] = Field(default_factory=list)
+    required_evidence: List[str] = Field(default_factory=list)
+    related_kpis: List[str] = Field(default_factory=list)
+
+
+class Recommendation(BaseModel):
+    """Hedged recommendation in outputs/insights.json (§2.6 chain)."""
+    recommendation_id: str
+    insight_id: str          # must reference an existing insight_id
+    title: str
+    description: str
+
+
+# ---------------------------------------------------------------------------
+# Stage 7 — Report (§2.7)
+# ---------------------------------------------------------------------------
+
+
+class ReportResult(BaseModel):
+    """metadata/report_result.json"""
+    status: Literal["rendered", "failed"]
+    report_path: str | None = None
+    locale: str = "en"
+    sections: List[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Stage 8 — QA (§2.8)
+# ---------------------------------------------------------------------------
+
+
+class QaVerdict(BaseModel):
+    """metadata/qa_verdict.json — deterministic verdict + informational score.
+
+    score is informational only; the verdict is decided purely by the
+    logical conditions (§2.8).
+    """
+    verdict: Literal["APPROVED", "APPROVED_WITH_WARNINGS", "NEEDS_REVISION"]
+    score: float
+    critical: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    info: List[str] = Field(default_factory=list)
+    reason_codes: List[str] = Field(default_factory=list)
