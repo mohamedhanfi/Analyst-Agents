@@ -1,113 +1,473 @@
-# Insight Forge
+<p align="center">
+  <img src="https://img.shields.io/badge/status-design--spec%20%E2%80%94%20no%20code%20yet-orange" alt="status">
+  <img src="https://img.shields.io/badge/framework-CrewAI-blue" alt="framework">
+  <img src="https://img.shields.io/badge/spec%20version-4.3.0-lightgrey" alt="spec version">
+</p>
 
-> ⚠️ **Status: Design Specification — no source code in this repository yet.**
-> This README is generated entirely from `Insight Forge — Implementation Guide` (v4.3.0), the project's technical design document. **No `main.py`, agents, tools, schemas, tests, or dependency files currently exist in this repository.** Every path, module, class, and command below is the *planned* implementation described in that spec, not verified running code. Sections are labeled **Planned** throughout. This document should be regenerated from the actual source tree once implementation begins.
-
----
-
-## 1. Description
-
-Insight Forge is a specified multi-agent data-analysis pipeline: a user uploads a CSV/XLSX file, and eight sequential stages — ingestion, understanding, data quality, cleaning, analysis, insights, reporting, and QA — turn it into an evidence-grounded HTML report with KPIs, statistical tests, charts, and hedged recommendations.
-
-The design's core rule:
-
-> **The LLM decides WHAT to do. Python libraries DO the actual work.**
-
-No LLM ever computes a number, draws a chart, cleans a value, or reads a raw file directly — it only decides what to run and interprets/writes text. Every computation, chart render, cleaning operation, and validation step is deterministic Python, and the final QA stage recomputes 100% of KPIs independently before a report is approved.
+<h1 align="center">Insight Forge</h1>
+<p align="center"><b>An 8-agent CrewAI pipeline that turns a raw CSV/XLSX into an evidence-grounded, QA-verified analytics report.</b></p>
 
 ---
 
-## 2. Key Technologies (Planned)
-
-| Concern | Library / Framework |
-|---|---|
-| Agent orchestration | **CrewAI** (Agents, Tasks, Flows) — the only framework specified |
-| Data handling | pandas, numpy, openpyxl |
-| Statistics | scipy, statsmodels |
-| Charting | matplotlib, seaborn |
-| Report rendering | jinja2, weasyprint, babel (locale/number formatting) |
-| Validation | Pydantic (`shared/schemas.py`) |
-
-These are the packages named in the spec's `pyproject.toml` description (§4); no actual `pyproject.toml` or `requirements.txt` exists in the repo yet.
+> ### ⚠️ This repository currently contains a design specification, not implemented code.
+> Everything below — file paths, agents, tools, schemas, commands — is the **planned** implementation, transcribed from `Insight Forge — Implementation Guide` v4.3.0. Nothing has been built yet. Once real source files exist, this README should be regenerated from the actual code.
 
 ---
 
-## 3. Architecture
+## Table of Contents
 
-### 3.1 Golden rule
-
-| | LLM does | Python does |
-|---|---|---|
-| Never | compute, draw, clean, read raw files | — |
-| Always | decide what to run, interpret results, write insights & summary | every number, file, chart, cleaning op, validation |
-
-### 3.2 CrewAI mapping
-
-- Every **LLM-deciding** stage is one CrewAI **Agent** (`role`/`goal`/`backstory`) with CrewAI **Tasks**.
-- All computation is a CrewAI **Tool** (Python `@tool` wrapper).
-- Branching/looping (DQ gate, cleaning retries, QA verdict) is a CrewAI **Flow** (`@flow`/`@router`), in `crew/flows.py`.
-- **Data Quality** is the one stage with zero LLM involvement — it's a plain Flow step, not a CrewAI Task, even though its module lives in `agents/` alongside the LLM-driven agents.
-- QA must use a **different LLM** than the one used for generation.
-
-| Stage | Crew construct | Type |
-|---|---|---|
-| 1. Ingestion | Agent | Engine + small LLM |
-| 2. Understanding (+ Planning) | Agent | LLM-heavy |
-| 3. Data Quality | Flow step | Engine only (no LLM) |
-| 4. Cleaning | Agent | LLM strategy + engine exec |
-| 5. Analysis | Agent | LLM selects + engine computes |
-| 6. Insights | Agent | LLM-heavy |
-| 7. Report | Agent | Engine + LLM summary |
-| 8. QA | Agent | Engine + independent LLM |
+- [📚 Full Reference](#-full-reference)
+  - [Agents in depth](#agents-in-depth)
+  - [Full repository tree](#full-repository-tree)
+  - [Full guardrails](#full-guardrails)
+    - [Hard limits](#hard-limits)
+    - [System-wide rules](#system-wide-rules)
+  - [Schemas \& data contracts](#schemas--data-contracts)
+  - [Configuration](#configuration)
+  - [Reproducibility, caching \& retention](#reproducibility-caching--retention)
+    - [Manifest, logging \& run isolation](#manifest-logging--run-isolation)
+    - [Caching \& idempotency](#caching--idempotency)
+    - [Run comparison \& retention policy](#run-comparison--retention-policy)
+  - [Full testing reference](#full-testing-reference)
 
 ---
 
-## 4. System Workflow (Planned)
+## What it does
+
+A user uploads a spreadsheet. The pipeline validates it, figures out what kind of data it is, cleans it, computes every KPI and statistical test on the **full dataset**, generates charts, writes evidence-grounded insights, renders an HTML report, and — before calling it done — independently **recomputes every number to check its own work**. The output is either `APPROVED`, `APPROVED_WITH_WARNINGS`, or `NEEDS_REVISION`.
+
+## Core principle
+
+> **The LLM decides WHAT to do. Python does the work.**
+
+No LLM ever touches raw data, computes a number, cleans a value, or draws a chart. It only chooses what to run and writes the narrative text. Every computation is deterministic Python (pandas/scipy/statsmodels/matplotlib), and a dedicated QA stage recomputes 100% of the numbers independently before approval.
+
+## How it works
 
 ```mermaid
 flowchart TD
-    U[User uploads CSV / XLSX] --> A1[1. Ingestion<br/>validate → extract → profile → business context]
-    A1 --> A2[2. Understanding<br/>column roles → domain → DSL analysis plan]
-    A2 --> A3{3. Data Quality<br/>schema / invalid / missingness}
-    A3 -->|passed| A4[4. Cleaning<br/>LLM strategy + Python execution]
-    A3 -->|needs_repair| R[Repair<br/>deterministic fix, internal to Agent 3] --> A4
-    A4 --> DQ2{Post-cleaning<br/>DQ re-check}
-    DQ2 -->|FAIL, retry ≤ 3| A4
-    DQ2 -->|FAIL, retry cap hit| NV1[Auto-verdict:<br/>NEEDS_REVISION<br/>cleaning_retry_limit_exceeded]
-    DQ2 -->|passed| A5[5. Analysis<br/>full-data KPIs + stats + charts + evidence]
-    A5 --> A6[6. Insights<br/>evidence-grounded insights + recommendations]
-    A6 --> A7[7. Report<br/>HTML render + LLM executive summary]
-    A7 --> A8[8. QA<br/>Python recompute + independent LLM review]
-    A8 -->|clean| OK[APPROVED]
-    A8 -->|minor warnings| OKW[APPROVED_WITH_WARNINGS]
-    A8 -->|critical / invalid evidence / fallback used| NV2[NEEDS_REVISION]
+    U[Upload CSV / XLSX] --> A1[1 · Ingestion]
+    A1 --> A2[2 · Understanding & Planning]
+    A2 --> A3{3 · Data Quality}
+    A3 -->|needs_repair| R[Deterministic repair] --> A4[4 · Cleaning]
+    A3 -->|passed| A4
+    A4 --> DQ2{Re-check}
+    DQ2 -->|fail, retry ≤3| A4
+    DQ2 -->|retry cap hit| NV1[NEEDS_REVISION]
+    DQ2 -->|passed| A5[5 · Analysis]
+    A5 --> A6[6 · Insights & Recommendations]
+    A6 --> A7[7 · Report]
+    A7 --> A8[8 · QA]
+    A8 --> V[APPROVED / APPROVED_WITH_WARNINGS / NEEDS_REVISION]
 ```
 
-### Hard limits (guardrails against unbounded loops / cost)
+## The 8 agents, at a glance
 
-| Limit | Value |
+| # | Agent | Type | One-line mission |
+|---|---|---|---|
+| 1 | **Ingestion** | Agent | Validate the file, extract data, ask business questions |
+| 2 | **Understanding** | Agent | Classify columns, detect domain, build the analysis plan |
+| 3 | **Data Quality** | Flow step (no LLM) | Deterministic pre-cleaning gate |
+| 4 | **Cleaning** | Agent | Fix data per strategy; re-check quality |
+| 5 | **Analysis** | Agent | Compute KPIs, run stats, plan & draw charts |
+| 6 | **Insights** | Agent | Write evidence-grounded insights & recommendations |
+| 7 | **Report** | Agent | Render the HTML report + executive summary |
+| 8 | **QA** | Agent | Recompute everything; issue the final verdict |
+
+Full mission/input/output/tasks/tools per agent → [Agents in depth](#agents-in-depth) below.
+
+## Repository layout
+
+```
+insight-forge/
+├── main.py            # entry point — builds Crew, runs Flow
+├── config.yaml         # per-agent config, hard limits, retention
+├── crew/                # CrewAI Agents/Tasks (crew.py) + branching Flow (flows.py)
+├── agents/              # one module per pipeline stage (8 total)
+├── analysis/            # deterministic compute: chart_planner, evidence registry, domain modules
+├── shared/               # tools, schemas, DSL validator, logger, utils
+├── resources/            # report template + static business-context templates
+├── runs/                 # per-run isolated output (data, metadata, outputs, logs)
+├── cache/                 # idempotency + run-comparison indexes
+└── tests/                 # unit/integration/statistical/security/agent/e2e/golden
+```
+
+Fully annotated tree → [Full repository tree](#full-repository-tree) below.
+
+## Key technologies
+
+| Concern | Stack |
 |---|---|
-| LLM retries per agent task | 3 |
-| Post-cleaning DQ re-checks | 3 → auto-verdict `NEEDS_REVISION` (`cleaning_retry_limit_exceeded`) |
-| HumanInputTool timeout | 5 min → falls back to Generic Analysis Mode |
-| Max file size | 200 MB (reject above) |
-| Max rows | 5,000,000 (above → chunked processing, not rejection) |
-| Max columns | 10,000 |
-| Max chart count | 20 (excess candidates dropped, lowest-ranked first; `charts_truncated: true`) |
-| Per-stage timeout | 600 s default (`config.yaml`) |
-| Per-run LLM cost cap | `config.yaml: max_cost_usd` (default 5.00) |
-| Per-agent token cap | `config.yaml: max_tokens_per_agent` (default 50k in/out) |
-| Total run duration | `config.yaml: max_run_seconds` (default 1800) |
+| Orchestration | CrewAI (Agents, Tasks, Flows) |
+| Data | pandas, numpy, openpyxl |
+| Stats | scipy, statsmodels |
+| Charts | matplotlib, seaborn |
+| Reporting | jinja2, weasyprint, babel |
+| Validation | Pydantic |
 
-**Fallback semantics:** any tripped hard cap stops the run cleanly, writes partial output, and QA emits an auto-verdict `NEEDS_REVISION` with a machine-readable reason code (`cleaning_retry_limit_exceeded`, `cost_limit_exceeded`, `token_limit_exceeded`, `run_time_limit_exceeded`).
+## Guardrails
 
-**>5M rows:** parsed via chunking (`pandas.read_csv(chunksize=50_000)`, `openpyxl.read_only`); aggregations are streamed chunk-by-chunk so final numbers stay full-data, never sampled — only LLM/UX previews are small.
+Hard limits prevent unbounded loops and runaway cost: max 3 retries per LLM task, max 3 cleaning re-checks, per-run cost/token/time caps, 200 MB file size cap, chunked processing above 5M rows, and a 20-chart cap. Any tripped limit stops the run cleanly and auto-issues `NEEDS_REVISION`.
+
+Full guardrails, fallback semantics, and the deterministic QA verdict table → [Full guardrails](#full-guardrails) below.
+
+## Installation & usage
+
+> Not runnable yet — no `pyproject.toml`, `main.py`, or `.env.example` exist in the repository. Once implemented, per the spec:
+
+```bash
+git clone <repository-url>
+cd insight-forge
+pip install -e .
+cp .env.example .env      # fill in LLM provider keys
+python main.py
+```
+
+## Testing
+
+Planned suites: unit, integration, statistical, agent, security, and end-to-end runs against golden datasets with precomputed ground truth (`sales_small`, `sales_missing`, `sales_outliers`, `sales_duplicates`, `sales_injection`, `sales_pii`, `hr`, `finance`).
+
+Full test suite breakdown → [Full testing reference](#full-testing-reference) below.
+
+## Status & roadmap
+
+**Production-oriented, not production-ready** — and, as of this README, not yet implemented. Roadmap: golden-dataset evaluation suite → domain KPI modules → observability/cost dashboard → interactive charts + Arabic/RTL reports → forecasting & anomaly detection.
 
 ---
 
-## 5. Repository Structure (Planned)
+# 📚 Full Reference
 
-> None of the files/folders below exist yet. This is the target layout from the design spec (§4, v4.3).
+Everything below is the same design spec, in full detail. Click any section to expand.
+
+## Agents in depth
+
+Each agent follows: **Mission → Input → Output → Tasks → Tools**.
+
+<details>
+<summary><b>1. Ingestion</b> — <code>agents/ingestion_agent.py</code></summary>
+
+**Mission:** validate the file deeply, extract data, ask business questions, emit profile + context.
+
+| Who | Does |
+|---|---|
+| Python | validate (extension + MIME + signature + parser), read CSV/XLSX, merge sheets, profile (shape/dtypes/nulls/duplicates), detect PII columns |
+| LLM | ask which sheet + business questions (HumanInputTool), interpret answers |
+
+**Input:** raw file, user answers
+**Output:** `data/extracted/*.csv`, `metadata/data_profile.json`, `knowledge/business_context.json`
+
+**Tasks:** `validate_and_extract` · `profile_dataset` · `gather_business_context`
+**Tools:** `file_validator_tool` · `file_reader_tool` · `data_profiler_tool` · `pii_detector_tool` · `human_input_tool`
+
+**Notes:** stops on unsupported format / empty or <5 rows / user cancel / fail after 3 retries. Cell content = untrusted data. Question timeout 5 min → Generic Analysis Mode.
+
+**Data profile output shape:**
+```json
+{
+  "file_name": "sales.xlsx", "file_hash": "sha256:...",
+  "row_count": 2300, "column_count": 8,
+  "columns": ["date","product","category","revenue","quantity","city"],
+  "column_types": {"date": "datetime64", "revenue": "float64"},
+  "missing_values": {"city": 45}, "duplicate_rows": 12,
+  "pii_columns": ["customer_email"], "validation_status": "passed"
+}
+```
+</details>
+
+<details>
+<summary><b>2. Understanding</b> (+ Planning) — <code>agents/understanding_agent.py</code></summary>
+
+**Mission:** from profile + a 20-row sample, classify column roles, detect domain, propose a DSL analysis plan. Planning is this agent's **second Task**, not a separate agent.
+
+| Who | Does |
+|---|---|
+| Python | `nunique()`, `head()`, datetime/numeric detection, role rules |
+| LLM | review roles, detect domain/entities, propose DSL KPIs, build plan |
+
+**Column-role rules (Python):**
+```
+nunique == row_count          → identifier
+dtype datetime                → temporal
+numeric & nunique > 20        → measure
+numeric & nunique ≤ 20        → measure or categorical
+object & nunique ≤ 20         → dimension
+object & nunique > 50         → free_text
+```
+LLM may reclassify by name (e.g. numeric `zip_code` → identifier).
+
+**Input:** `data_profile.json`, `business_context.json`, 20-row sample
+**Output:** `metadata/dataset_understanding.json`, `metadata/analysis_plan.json` (DSL ops only)
+
+**Tasks:** `classify_column_roles` · `detect_domain_and_entities` · `build_analysis_plan`
+**Tools:** `column_profiler_tool` · `domain_classifier_tool` · `dsl_plan_builder_tool` (validates against `shared/dsl_validator.py` whitelist)
+
+**Output shape:**
+```json
+{
+  "detected_domain": "sales", "domain_confidence": 0.87,
+  "entities": ["Product","Customer","Order"],
+  "temporal_columns": ["order_date"], "dimensions": ["product","category"],
+  "measures": ["revenue","quantity"], "identifiers": ["order_id"],
+  "candidate_kpis": [
+    {"kpi_id":"KPI-001","name":"Total Revenue","operation":{"function":"sum","column":"revenue"}}
+  ],
+  "statistical_tests":["descriptive","correlation","trend","anova"],
+  "has_temporal_data": true, "limitations": []
+}
+```
+</details>
+
+<details>
+<summary><b>3. Data Quality</b> — <code>agents/data_quality.py</code> (deterministic Flow step, no LLM)</summary>
+
+**Mission:** deterministic pre-cleaning gate — catches what cleaning strategy can't see.
+
+**Checks:** schema · invalid values (impossible dates, negative revenue, %>100, `age=350`) · missingness MCAR/MAR/MNAR · duplicates · referential integrity · business rules · units/encoding.
+
+**Input:** `dataset_understanding.json`, `data_profile.json`, `business_context.json`, raw sample
+**Output:** `metadata/data_quality_report.json` (`status: passed | needs_repair`)
+
+**Gate:** `passed` → Cleaning. `needs_repair` → Repair, then Cleaning. Unresolved high-severity → QA must flag.
+
+**Repair scope (auto-fix vs flag to Cleaning):**
+
+| Issue | Auto-fix | Flagged to Cleaning |
+|---|---|---|
+| Negative values in measure | No — never sign-flip; flagged | Cleaning decides (drop/exclude) |
+| Type mismatch | Cast by role (`astype`, `to_datetime`) | — |
+| Exact duplicates | `drop_duplicates()` | — |
+| Impossible dates | Row dropped + logged | — |
+| Out-of-range percentages | Flagged | Cleaning decides |
+| Unknown category values | Flagged | Cleaning decides (map/keep/"Unknown") |
+| MAR/MNAR missingness | No imputation — preserve + flag | Cleaning builds flag features |
+
+Rule: **Repair never invents data.** It only casts types, drops exact duplicates/impossible rows, and preserves everything else for Cleaning to decide.
+
+**Output shape:**
+```json
+{
+  "status": "passed | needs_repair",
+  "invalid": {"revenue": ["negative"], "order_date": ["future_dates"]},
+  "missingness": {"rate": 0.27, "pattern": "non_random", "assessment": "MAR_suspected"},
+  "duplicates": 12,
+  "issues": [{"severity":"high","category":"invalid_value"}]
+}
+```
+
+**Tools:** `schema_checker_tool` · `invalid_value_checker_tool` · `missingness_analyzer_tool` · `duplicate_detector_tool` · `referential_integrity_tool` · `deterministic_repair_tool`
+</details>
+
+<details>
+<summary><b>4. Cleaning</b> — <code>agents/cleaning_agent.py</code></summary>
+
+**Mission:** clean by column role + DQ report. LLM picks strategy; Python executes, logs, and re-checks.
+
+| Who | Does |
+|---|---|
+| LLM | decide strategy (JSON) |
+| Python | fillna, `*_missing_flag` columns, cast types, drop dupes, IQR outliers, log + re-run DQ checks |
+
+**Missing-value strategy by role + missingness type:**
+
+| Role | MCAR <5% | MCAR 5-30% | MAR/MNAR (signal) | >70% |
+|---|---|---|---|---|
+| measure | median fill | median + flag | flag_and_preserve + exclude | drop |
+| dimension | mode fill | "Unknown" | flag_and_preserve | keep + flag |
+| temporal | drop row | drop row | drop row | drop column |
+| identifier | drop row | drop row | drop row | drop column |
+
+> `flag_and_preserve` = keep missingness as a boolean feature. Never impute silently when the pattern is non-random.
+
+**Input:** DQ report, understanding, profile, raw data
+**Output:** `data/processed/cleaned_data.csv` (latest accepted attempt; retries kept as `cleaned_data_attempt_<n>.csv`), `metadata/cleaning_result.json`
+
+**Tasks:** `decide_cleaning_strategy` · `execute_cleaning` · `recheck_data_quality` (loops on FAIL, max 3 re-runs)
+**Tools:** `cleaning_strategy_tool` · `fillna_tool` · `flag_column_tool` · `type_caster_tool` · `dedup_tool` · `iqr_outlier_tool` · `dq_recheck_tool`
+</details>
+
+<details>
+<summary><b>5. Analysis</b> — <code>agents/analyst_agent.py</code></summary>
+
+**Mission:** compute everything on the full cleaned dataset. LLM selects KPIs and re-ranks chart candidates; Python executes DSL, runs stats, plans & draws charts, writes evidence.
+
+**Statistical suite:**
+
+| Category | Tests |
+|---|---|
+| Descriptive | mean/median/std/quantiles/IQR/skew/kurtosis |
+| Correlation | Pearson (+ p-value, CI, effect size, n); Spearman |
+| Comparison 2 groups | t-test, Mann-Whitney U |
+| Comparison 3+ groups | ANOVA, Kruskal-Wallis + post-hoc |
+| Categorical | Chi-square, Cramér's V |
+| Time series | YoY, MoM, WoW, rolling, seasonality, trend significance |
+
+**KPI DSL whitelist** (LLM never writes freeform formulas):
+```
+sum, mean, median, count, nunique, min, max, std, growth, correlation, ratio
+```
+
+| Function | Parameters |
+|---|---|
+| `sum, mean, median, min, max, std, count, nunique` | `column` · `group_by` (opt) · `filter` (opt) |
+| `correlation` | `column_a`, `column_b` · `method`: pearson\|spearman |
+| `ratio` | `numerator`, `denominator` (each a nested op) |
+| `growth` | `column` · `over_column` · `period`: YoY\|MoM\|WoW · `basis` · `as_percent` |
+
+**KPI record example:**
+```json
+{
+  "kpi_id": "KPI-001", "name": "Total Revenue",
+  "operation": {"function": "sum", "column": "revenue", "group_by": null, "filter": null},
+  "value": 2450000.50, "evidence_id": "EV-001", "computed_by": "pandas"
+}
+```
+
+**Growth KPI example** (`growth` semantic: `(current − baseline) / baseline`):
+```json
+{
+  "kpi_id": "KPI-003", "name": "Revenue MoM Growth",
+  "operation": {
+    "function": "growth", "column": "revenue", "over_column": "order_date",
+    "period": "MoM", "basis": "previous_period", "group_by": ["category"],
+    "filter": null, "as_percent": 1
+  },
+  "value": 12.4, "evidence_id": "EV-003", "computed_by": "pandas"
+}
+```
+
+**Chart planner (data-driven, not a fixed menu)** — Python inspects each candidate's data shape and picks the chart form from an ordered rule table (`analysis/chart_planner.py`); the LLM only chooses which facts deserve a chart:
+
+| # | Data shape | Chart |
+|---|---|---|
+| 1 | single dimension, ≤2 values | bar / donut |
+| 2 | ordered axis (dates), ≥3 points | line |
+| 3 | single dimension, 3–12 values | vertical bar |
+| 4 | single dimension, 13–50 values | horizontal bar |
+| 5 | single dimension, >50 values | barh top-15 + "$rest" rollup |
+| 6 | numeric distribution/skew | histogram (Freedman–Diaconis bins) |
+| 7 | 2 numeric measures | scatter + trend line if r significant |
+| 8 | ≥3 numeric measures | ranked correlation heatmap |
+| 9 | share/"% of whole" ≈100% | doughnut |
+
+If data is too thin, planner downgrades to a simple bar/table and stamps `reliability: "low_n"`.
+
+**Chart record example:**
+```json
+{
+  "chart_id": "CH-004", "kind": "line",
+  "reason": "1 ordered dim (month) >= 3 points -> line",
+  "columns": ["order_date", "revenue"], "evidence_id": "EV-007", "computed_by": "pandas"
+}
+```
+
+**Accessibility:** color-blind safe palettes, pattern+label redundancy (never color-only), alt-text captions per chart.
+**Localization:** numeric/date formatting follows report locale via `babel`, applied by Python at render time — not the LLM.
+
+**Input:** cleaned data, plan, understanding, business context, cleaning result
+**Output:** `outputs/kpis.json`, `outputs/statistical_results.json`, `outputs/charts/*.svg`, `metadata/chart_metadata.json`, `outputs/evidence_registry.json`
+
+**Tasks:** `select_kpis` · `run_dsl_and_stats` · `rank_chart_candidates`
+**Tools:** `dsl_executor_tool` · `statistical_suite_tool` · `chart_planner_tool` · `chart_renderer_tool` · `evidence_registry_tool` (the only writer)
+</details>
+
+<details>
+<summary><b>6. Insights & Recommendations</b> — <code>agents/insight_agent.py</code></summary>
+
+**Mission:** write evidence-grounded insights + hedged recommendations.
+
+**Claim taxonomy:**
+
+| Type | Allowed when | Guard |
+|---|---|---|
+| DESCRIPTIVE / COMPARATIVE | always | must quote evidence IDs |
+| CORRELATIONAL | p-value + CI present | report strength, not cause |
+| PREDICTIVE | forecasting module ran | labeled as forecast |
+| CAUSAL | never without causal methodology | e.g. "revenue grew during discount periods," not "discounts caused growth" |
+
+**Recommendation chain:** Observation → Finding → Implication → hedged recommendation ("consider testing…").
+
+**Validation before saving:** non-empty evidence_ids, refs exist in registry, claim matches evidence type, recommendations reference only existing insights. Any failure → removed + logged.
+
+**Insight record example:**
+```json
+{
+  "insight_id": "INS-001", "claim_type": "COMPARATIVE",
+  "title": "electronics fastest in Q3", "confidence": "high",
+  "evidence_ids": ["EV-001", "EV-006"],
+  "required_evidence": ["group_comparison", "growth_rate"],
+  "related_kpis": ["KPI-001"]
+}
+```
+
+**Evidence lineage example** (raw → cleaning → filter → aggregation → value):
+```json
+{
+  "evidence_id": "EV-006",
+  "source": {
+    "file_hash": "…", "sheet": "Sales",
+    "transformations": ["removed_duplicates"],
+    "filter": "category==Electronics",
+    "aggregation": "monthly_sum", "comparison": "Q4 vs Q3", "result": 27.4
+  }
+}
+```
+
+**Input:** `kpis.json`, `statistical_results.json`, `evidence_registry.json`, `business_context.json`, `dataset_understanding.json`
+**Output:** `outputs/insights.json`
+
+**Tasks:** `generate_insights` · `build_recommendations` · `validate_claims`
+**Tools:** `evidence_lookup_tool` · `claim_validator_tool` · `human_input_tool`
+
+**Optional human review checkpoint** (`config.yaml: review_required: true`): after validation, a human analyst can approve, edit text (evidence_ids must stay intact), or request regeneration.
+</details>
+
+<details>
+<summary><b>7. Report</b> — <code>agents/report_agent.py</code></summary>
+
+**Mission:** Python renders the full HTML report; LLM writes only the 3–5 sentence executive summary.
+
+**Security in render:** Jinja `autoescape=True`, HTML sanitizer, CSP header — cell content never rendered raw.
+
+**Input:** all `outputs/`, `metadata/`, `knowledge/` files, `resources/report_template.html`
+**Output:** `report.html`, `metadata/report_result.json`
+
+**Tasks:** `render_report` · `write_executive_summary`
+**Tools:** `html_renderer_tool` · `html_sanitizer_tool` · `locale_formatter_tool` · `chart_embed_tool`
+</details>
+
+<details>
+<summary><b>8. QA</b> — <code>agents/qa_agent.py</code></summary>
+
+**Mission:** last gate. Python recomputation is authoritative; an independent LLM (different model/prompt) checks logic and readability.
+
+| Who | Checks |
+|---|---|
+| Python | recompute 100% of KPIs (0.01% tolerance) · refs valid · charts exist · HTML sections · manifest fallback |
+| LLM | insight/recommendation logic alignment, summary readability |
+
+**Score (informational only):** `100 – (critical×15) – (warnings×2.5) – (info×0.5)`, floor 0. The verdict is **not** decided by score — a high score never overrides `NEEDS_REVISION` when a critical issue exists.
+
+**Verdict (deterministic):**
+
+| Condition | Verdict |
+|---|---|
+| any critical | NEEDS_REVISION |
+| fallback used | NEEDS_REVISION |
+| invalid evidence / unresolved DQ | NEEDS_REVISION |
+| resource limit exceeded | NEEDS_REVISION (auto) |
+| minor warnings only | APPROVED_WITH_WARNINGS |
+| clean | APPROVED |
+
+**Output:** `metadata/qa_verdict.json`
+
+**Tasks:** `recompute_kpis` · `validate_structure` · `review_logic_and_readability` · `compute_verdict`
+**Tools:** `kpi_recomputation_tool` · `reference_validator_tool` · `score_calculator_tool` · `verdict_tool`
+</details>
+
+## Full repository tree
+
+<details>
+<summary>Click to expand the fully annotated file tree</summary>
 
 ```
 insight-forge/
@@ -118,9 +478,9 @@ insight-forge/
 ├── crew/
 │   ├── crew.py                 # CrewAI Agents + Tasks in order
 │   └── flows.py                # DQ gate, Cleaning re-check, QA verdict branches
-├── agents/                     # one module per pipeline stage (all 8, incl. the deterministic one)
+├── agents/                     # one module per pipeline stage, all 8 stages together
 │   ├── ingestion_agent.py
-│   ├── understanding_agent.py  # roles + domain + DSL plan (planning is a 2nd Task, not a separate file)
+│   ├── understanding_agent.py  # roles + domain + DSL plan (planning is 2nd Task, not a separate file)
 │   ├── data_quality.py         # Engine only, no LLM — invoked by flows.py
 │   ├── cleaning_agent.py
 │   ├── analyst_agent.py
@@ -135,8 +495,8 @@ insight-forge/
 ├── shared/
 │   ├── tools.py                # CrewAI @tool wrappers
 │   ├── schemas.py               # Pydantic models
-│   ├── dsl_validator.py        # DSL whitelist validation
-│   ├── logger.py                # structured per-stage logging
+│   ├── dsl_validator.py        # DSL whitelist — used by Understanding (build) and Analysis (execute)
+│   ├── logger.py                # structured per-stage log → runs/<run_id>/logs/
 │   └── utils.py                 # config load, run_id allocator
 ├── resources/                  # read-only static assets
 │   ├── report_template.html
@@ -144,115 +504,105 @@ insight-forge/
 ├── runs/                       # run isolation — the only writable surface per run
 │   └── <run_id>/
 │       ├── data/                # raw/ extracted/ processed/
-│       ├── knowledge/           # business_context.json
-│       ├── metadata/            # data_profile, dataset_understanding, analysis_plan, data_quality_report, cleaning_result, chart_metadata, report_result, qa_verdict
-│       ├── outputs/             # report.html, kpis.json, statistical_results.json, insights.json, evidence_registry.json, run_comparison.json, charts/
-│       ├── logs/
+│       ├── knowledge/           # business_context.json (per-run, distinct from resources/business_context/)
+│       ├── metadata/            # data_profile · dataset_understanding · analysis_plan · data_quality_report · cleaning_result · chart_metadata · report_result · qa_verdict
+│       ├── outputs/             # report.html · kpis.json · statistical_results.json · insights.json · evidence_registry.json · run_comparison.json · charts/
+│       ├── logs/                # LLM/tool logs
 │       └── master_manifest.json
-├── cache/                      # key→run_id index (idempotency) + source_name→run_ids index
-└── tests/
-    └── unit/ integration/ regression/ security/ statistical/ agent/ e2e/ golden/ fixtures/
+├── cache/                       # key→run_id index (idempotency) + source_name→run_ids index
+└── tests/                       # unit/ integration/ regression/ security/ statistical/ agent/ e2e/ golden/ fixtures/
 ```
 
----
+</details>
 
-## 6. Agents (Planned)
+## Full guardrails
 
-Each agent follows: **Mission → Input → Output → Tasks → Tools**.
+<details>
+<summary>Click to expand hard limits, fallback semantics, and system-wide rules</summary>
 
-### 6.1 Ingestion (`agents/ingestion_agent.py`)
-- **Mission:** validate the file deeply, extract data, ask business questions, emit profile + context.
-- **Input:** raw file, user answers
-- **Output:** `data/extracted/*.csv`, `metadata/data_profile.json`, `knowledge/business_context.json`
-- **Tasks:** `validate_and_extract`, `profile_dataset`, `gather_business_context`
-- **Tools:** `file_validator_tool`, `file_reader_tool`, `data_profiler_tool`, `pii_detector_tool`, `human_input_tool`
+### Hard limits
 
-### 6.2 Understanding (`agents/understanding_agent.py`)
-- **Mission:** from profile + a 20-row sample, classify column roles, detect domain, propose a DSL analysis plan (planning is this agent's 2nd Task, not a separate agent).
-- **Input:** `data_profile.json`, `business_context.json`, 20-row sample
-- **Output:** `metadata/dataset_understanding.json`, `metadata/analysis_plan.json`
-- **Tasks:** `classify_column_roles`, `detect_domain_and_entities`, `build_analysis_plan`
-- **Tools:** `column_profiler_tool`, `domain_classifier_tool`, `dsl_plan_builder_tool`
-
-### 6.3 Data Quality (`agents/data_quality.py`) — deterministic Flow step, no LLM
-- **Mission:** deterministic pre-cleaning gate; catches what cleaning strategy can't see (schema, invalid values, missingness pattern, duplicates, referential integrity, business rules).
-- **Input:** `dataset_understanding.json`, `data_profile.json`, `business_context.json`, raw sample
-- **Output:** `metadata/data_quality_report.json` (`status: passed | needs_repair`)
-- **Tools:** `schema_checker_tool`, `invalid_value_checker_tool`, `missingness_analyzer_tool`, `duplicate_detector_tool`, `referential_integrity_tool`, `deterministic_repair_tool`
-
-### 6.4 Cleaning (`agents/cleaning_agent.py`)
-- **Mission:** LLM picks a cleaning strategy per column role + missingness type; Python executes, logs, and re-checks via Data Quality (max 3 retries).
-- **Input:** DQ report, understanding, profile, raw data
-- **Output:** `data/processed/cleaned_data.csv` (+ versioned `cleaned_data_attempt_<n>.csv` on retries), `metadata/cleaning_result.json`
-- **Tasks:** `decide_cleaning_strategy`, `execute_cleaning`, `recheck_data_quality`
-- **Tools:** `cleaning_strategy_tool`, `fillna_tool`, `flag_column_tool`, `type_caster_tool`, `dedup_tool`, `iqr_outlier_tool`, `dq_recheck_tool`
-
-### 6.5 Analysis (`agents/analyst_agent.py`)
-- **Mission:** compute everything on the full cleaned dataset; LLM selects KPIs and interprets/re-ranks chart candidates; Python executes DSL, runs the statistical suite, plans & draws charts, writes evidence.
-- **Input:** cleaned data, plan, understanding, business context, cleaning result
-- **Output:** `outputs/kpis.json`, `outputs/statistical_results.json`, `outputs/charts/*.svg`, `metadata/chart_metadata.json`, `outputs/evidence_registry.json`
-- **Tasks:** `select_kpis`, `run_dsl_and_stats`, `rank_chart_candidates`
-- **Tools:** `dsl_executor_tool`, `statistical_suite_tool`, `chart_planner_tool`, `chart_renderer_tool`, `evidence_registry_tool`
-
-### 6.6 Insights & Recommendations (`agents/insight_agent.py`)
-- **Mission:** write evidence-grounded insights and hedged recommendations, validated against the claim taxonomy (descriptive/comparative always allowed, correlational needs stats, predictive needs a forecasting module, causal is never allowed without causal methodology).
-- **Input:** `kpis.json`, `statistical_results.json`, `evidence_registry.json`, `business_context.json`, `dataset_understanding.json`
-- **Output:** `outputs/insights.json`
-- **Tasks:** `generate_insights`, `build_recommendations`, `validate_claims`
-- **Tools:** `evidence_lookup_tool`, `claim_validator_tool`, `human_input_tool` (optional review checkpoint)
-
-### 6.7 Report (`agents/report_agent.py`)
-- **Mission:** Python renders the full HTML report from all run JSONs; LLM writes only the 3–5 sentence executive summary.
-- **Input:** all `outputs/`, `metadata/`, `knowledge/` files, `resources/report_template.html`
-- **Output:** `report.html`, `metadata/report_result.json`
-- **Tasks:** `render_report`, `write_executive_summary`
-- **Tools:** `html_renderer_tool`, `html_sanitizer_tool`, `locale_formatter_tool`, `chart_embed_tool`
-
-### 6.8 QA (`agents/qa_agent.py`)
-- **Mission:** last gate. Python recomputation of 100% of KPIs is authoritative; an independent LLM (different model/prompt than generation) checks logic alignment and readability. The verdict is decided by deterministic conditions, not the score.
-- **Input:** all run outputs and metadata
-- **Output:** `metadata/qa_verdict.json`
-- **Tasks:** `recompute_kpis`, `validate_structure`, `review_logic_and_readability`, `compute_verdict`
-- **Tools:** `kpi_recomputation_tool`, `reference_validator_tool`, `score_calculator_tool`, `verdict_tool`
-
----
-
-## 7. Shared / Core Modules (Planned)
-
-| Module | Responsibility |
+| Limit | Value |
 |---|---|
-| `shared/tools.py` | CrewAI `@tool` wrappers used across agents |
-| `shared/schemas.py` | Pydantic models for the JSON artifacts (profile, plan, KPI, evidence, insight, verdict, etc.) |
-| `shared/dsl_validator.py` | Validates the KPI DSL against its whitelist; used by both Understanding (build) and Analysis (execute) |
-| `shared/logger.py` | Structured per-stage logging (LLM latency/tokens/cost, tool calls, retries) into `runs/<run_id>/logs/` |
-| `shared/utils.py` | Config loading (`config.yaml` + env), `run_id` allocation |
-| `analysis/chart_planner.py` | Deterministic chart-shape selection rules |
-| `analysis/evidence.py` | `evidence_id` minting and the evidence registry (single writer) |
+| LLM retries per agent task | 3 |
+| Post-cleaning DQ re-checks | 3 → auto-verdict NEEDS_REVISION (`cleaning_retry_limit_exceeded`) |
+| HumanInputTool timeout | 5 min → Generic Analysis Mode |
+| Max file size | 200 MB (reject above) |
+| Max rows | 5,000,000 (above → chunked processing, not rejection) |
+| Max columns | 10,000 |
+| Max chart count | 20 (excess dropped, lowest-ranked first; `charts_truncated: true`) |
+| Per-stage timeout | 600s default (`config.yaml`) |
+| Per-run LLM cost cap | `max_cost_usd` (default 5.00) |
+| Per-agent token cap | `max_tokens_per_agent` (default 50k in/out) |
+| Total run duration | `max_run_seconds` (default 1800) |
 
----
+**Fallback semantics:** any tripped cap stops the run cleanly, writes partial output, and QA emits auto-verdict `NEEDS_REVISION` with a machine-readable reason (`cleaning_retry_limit_exceeded`, `cost_limit_exceeded`, `token_limit_exceeded`, `run_time_limit_exceeded`).
 
-## 8. Schemas / Data Contracts (Planned)
+**>5M rows:** parsed via chunking (`pandas.read_csv(chunksize=50_000)`, `openpyxl.read_only`); aggregations stream chunk-by-chunk so final numbers stay full-data, never sampled.
 
-Representative JSON shapes documented in the spec (Pydantic models to be defined in `shared/schemas.py`):
+### System-wide rules
 
-**KPI DSL whitelist** — LLM never writes freeform formulas, only these functions:
+- **Full data, always** — Python aggregates the complete dataset; LLM/UX see samples only.
+- **Python is authoritative** — QA recomputes 100% of KPIs from cleaned data (0.01% tolerance).
+- **Evidence is concrete** — every number/chart/insight/claim carries an `evidence_id` with lineage.
+- **Claims are conservative** — descriptive/comparative/correlational by default; predictive/causal gated.
+- **Generic Analysis Mode** — if business questions time out, proceeds with `context_confidence: 0`.
+
+</details>
+
+## Schemas & data contracts
+
+<details>
+<summary>Click to expand the JSON contracts referenced above (Pydantic models, planned in <code>shared/schemas.py</code>)</summary>
+
+**Data profile (Ingestion output):**
+```json
+{
+  "file_name": "sales.xlsx", "file_hash": "sha256:...",
+  "row_count": 2300, "column_count": 8,
+  "columns": ["date","product","category","revenue","quantity","city"],
+  "column_types": {"date": "datetime64", "revenue": "float64"},
+  "missing_values": {"city": 45}, "duplicate_rows": 12,
+  "pii_columns": ["customer_email"], "validation_status": "passed"
+}
 ```
-sum, mean, median, count, nunique, min, max, std, growth, correlation, ratio
+
+**Dataset understanding / analysis plan:**
+```json
+{
+  "detected_domain": "sales", "domain_confidence": 0.87,
+  "entities": ["Product","Customer","Order"],
+  "temporal_columns": ["order_date"], "dimensions": ["product","category"],
+  "measures": ["revenue","quantity"], "identifiers": ["order_id"],
+  "candidate_kpis": [
+    {"kpi_id":"KPI-001","name":"Total Revenue","operation":{"function":"sum","column":"revenue"}}
+  ],
+  "statistical_tests":["descriptive","correlation","trend","anova"],
+  "has_temporal_data": true, "limitations": []
+}
+```
+
+**Data quality report:**
+```json
+{
+  "status": "passed | needs_repair",
+  "invalid": {"revenue": ["negative"], "order_date": ["future_dates"]},
+  "missingness": {"rate": 0.27, "pattern": "non_random", "assessment": "MAR_suspected"},
+  "duplicates": 12,
+  "issues": [{"severity":"high","category":"invalid_value"}]
+}
 ```
 
 **KPI record:**
 ```json
 {
-  "kpi_id": "KPI-001",
-  "name": "Total Revenue",
-  "operation": { "function": "sum", "column": "revenue", "group_by": null, "filter": null },
-  "value": 2450000.50,
-  "evidence_id": "EV-001",
-  "computed_by": "pandas"
+  "kpi_id": "KPI-001", "name": "Total Revenue",
+  "operation": {"function": "sum", "column": "revenue", "group_by": null, "filter": null},
+  "value": 2450000.50, "evidence_id": "EV-001", "computed_by": "pandas"
 }
 ```
 
-**Evidence lineage record:**
+**Evidence lineage:**
 ```json
 {
   "evidence_id": "EV-006",
@@ -260,9 +610,7 @@ sum, mean, median, count, nunique, min, max, std, growth, correlation, ratio
     "file_hash": "…", "sheet": "Sales",
     "transformations": ["removed_duplicates"],
     "filter": "category==Electronics",
-    "aggregation": "monthly_sum",
-    "comparison": "Q4 vs Q3",
-    "result": 27.4
+    "aggregation": "monthly_sum", "comparison": "Q4 vs Q3", "result": 27.4
   }
 }
 ```
@@ -270,10 +618,8 @@ sum, mean, median, count, nunique, min, max, std, growth, correlation, ratio
 **Insight record:**
 ```json
 {
-  "insight_id": "INS-001",
-  "claim_type": "COMPARATIVE",
-  "title": "electronics fastest in Q3",
-  "confidence": "high",
+  "insight_id": "INS-001", "claim_type": "COMPARATIVE",
+  "title": "electronics fastest in Q3", "confidence": "high",
   "evidence_ids": ["EV-001", "EV-006"],
   "related_kpis": ["KPI-001"]
 }
@@ -282,123 +628,106 @@ sum, mean, median, count, nunique, min, max, std, growth, correlation, ratio
 **Chart record:**
 ```json
 {
-  "chart_id": "CH-004",
-  "kind": "line",
+  "chart_id": "CH-004", "kind": "line",
   "reason": "1 ordered dim (month) >= 3 points -> line",
-  "columns": ["order_date", "revenue"],
-  "evidence_id": "EV-007",
-  "computed_by": "pandas"
+  "columns": ["order_date", "revenue"], "evidence_id": "EV-007", "computed_by": "pandas"
 }
 ```
 
-**QA verdict conditions (deterministic, no LLM in the decision itself):**
+</details>
 
-| Condition | Verdict |
-|---|---|
-| any critical issue | `NEEDS_REVISION` |
-| fallback used | `NEEDS_REVISION` |
-| invalid evidence / unresolved DQ | `NEEDS_REVISION` |
-| resource limit exceeded | `NEEDS_REVISION` (auto) |
-| minor warnings only | `APPROVED_WITH_WARNINGS` |
-| clean | `APPROVED` |
+## Configuration
 
-Score (informational only, does not override the verdict): `100 – (critical×15) – (warnings×2.5) – (info×0.5)`, floor 0.
+<details>
+<summary>Click to expand <code>config.yaml</code> / <code>.env.example</code> details</summary>
 
----
-
-## 9. Configuration (Planned)
-
-A single root `config.yaml` is specified to hold:
-- Per-agent `role` / `goal` / `backstory` / model selection (QA must use a different model than the generation agents)
-- Hard limits from §4 above (retries, timeouts, cost caps, token caps, run duration)
+A single root `config.yaml` holds:
+- Per-agent `role` / `goal` / `backstory` / model selection (QA must differ from generation agents)
+- Hard limits (retries, timeouts, cost caps, token caps, run duration)
 - `review_required` — toggles the optional human review checkpoint after Insights
-- `retention` — per-category retention days (raw uploads, run artifacts, logs)
+- `retention` — per-category retention days
 - `max_cost_usd`, `max_tokens_per_agent`, `max_run_seconds`
-- `encrypt_at_rest` — whether `runs/` data is AES-256 encrypted at rest
+- `encrypt_at_rest` — AES-256 encryption toggle for `runs/` data
 
-`.env.example` is specified to hold LLM provider API keys, loaded via `shared/utils.py` and never committed. The spec does not enumerate the exact variable names, so none are listed here to avoid inventing them.
+`.env.example` is specified to hold LLM provider API keys, loaded via `shared/utils.py`, never committed. The spec does not enumerate exact variable names.
 
----
+</details>
 
-## 10. Installation (Planned — not runnable yet)
+## Reproducibility, caching & retention
 
-No `pyproject.toml` or `requirements.txt` exists in the repository yet. Based on the dependency list named in the spec, installation would look like:
+<details>
+<summary>Click to expand manifest, caching/idempotency, run comparison, and retention policy</summary>
 
-```bash
-git clone <repository-url>
-cd insight-forge
-pip install -e .          # once pyproject.toml exists
-cp .env.example .env      # once .env.example exists — fill in LLM provider keys
-```
+### Manifest, logging & run isolation
 
----
+- **Manifest** (`master_manifest.json`) — everything needed to reproduce a run: `pipeline_version`, `code git_sha`, `data_hash`, `model`, `temperature`, `seed`, `python_version`, `packages`, `analysis_mode`.
+- **Structured log per stage** — LLM latency/tokens/cost, tool calls, errors, retries.
+- Each run gets a unique `run_id` (`run_<timestamp>_<seq>`) and writes only to its own `runs/<run_id>/` — no shared state between runs, safe to parallelize.
+- Only the output root needs a lightweight `run_id` allocator (atomic `mkdir`); reads of `resources/` are read-only and safe concurrently.
 
-## 11. Usage (Planned)
+### Caching & idempotency
 
-`main.py` is specified as the single entry point ("builds Crew, runs Flow"). The spec does not define a CLI argument interface, so no flags or subcommands are documented here — only what's stated:
+- **Cache key** = `sha256(file_bytes)` + `config_version` + `prompt_version` + model ids, stored in `cache/` (key → run_id; `source_name` → run_ids).
+- **Full-file hit:** same `input_hash` + effective config already produced an `APPROVED` run → return that run's report directly (`cached: true`), no recompute.
+- **Partial hits**, keyed on what actually changed (not a blanket "context differs" rule):
+  - Ingestion — always reusable on `input_hash` hit; never reads business context.
+  - Data Quality's schema/type/duplicate checks — reusable; business-rules checks re-run if `business_context.json` changes.
+  - Understanding/plan — re-run whenever business context changes.
+  - Cleaning, Analysis — reusable **only if `analysis_plan.json` is byte-identical** to the cached run's plan (checked via plan hash, not "context changed y/n").
+  - Insights, Summary — always re-run when upstream KPIs/evidence differ, or on `review_required` regeneration.
+- Idempotency: same key + inputs → same outputs (deterministic stages deterministic; LLM stages reproducible via `temperature: 0` + `seed`).
+- Cache is never QA's source of truth — QA always recomputes from current files.
 
-```bash
-python main.py
-```
+### Run comparison & retention policy
 
-The pipeline is expected to: accept a CSV/XLSX upload → run the 8-stage flow described in §4 → produce `runs/<run_id>/report.html` plus the JSON artifacts under `runs/<run_id>/outputs/` and `metadata/`.
+**Run comparison:** emitted as `outputs/run_comparison.json` whenever a prior run shares `source_name`. Compares KPI-by-KPI (`{kpi_id, previous_value, current_value, abs_delta, pct_delta}`), plus row-count/date-range/QA-score deltas. Informational only — never affects the verdict.
 
----
+**Retention:**
 
-## 12. Error Handling & Guardrails (Planned)
+| Item | Default |
+|---|---|
+| Raw uploads | 7 days |
+| Run artifacts | 30 days |
+| Logs | 90 days |
+| PII columns | redacted from LLM context/logs; full PII in outputs only with consent |
+| At-rest encryption | AES-256 when `config.encrypt_at_rest: true` |
+| User deletion | removes run dir + logs + cache entry immediately |
+| Purging | daily janitor job |
 
-- **Full data, always** — Python aggregates the complete dataset; LLM/UX only ever see samples/previews.
-- **Python is authoritative** — QA recomputes 100% of KPIs from cleaned data (0.01% tolerance) before any "done" state.
-- **Evidence is concrete** — every number, chart, insight, and claim carries an `evidence_id` with full lineage.
-- **Claims are conservative** — descriptive/comparative/correlational by default; predictive and causal claims are gated and require methodology.
-- **Generic Analysis Mode** — if business-context questions time out (5 min), the pipeline proceeds with `context_confidence: 0` and the report states that context-specific recommendations weren't possible.
-- **Retry/fallback caps** — see the hard-limits table in §4; any tripped cap produces a clean partial-output run and an auto `NEEDS_REVISION` verdict with a machine-readable reason code.
-- **Report rendering security** — Jinja `autoescape=True`, HTML sanitizer, CSP header; cell content is treated as untrusted data throughout the pipeline, never rendered raw.
+</details>
 
----
+## Full testing reference
 
-## 13. Testing (Planned)
+<details>
+<summary>Click to expand test suites and golden dataset table</summary>
 
-No test files exist yet. The spec defines these suites under `tests/`:
+**Test suites** (`tests/`):
 
 | Suite | Covers |
 |---|---|
-| unit / integration | tools, DSL, agent handoffs |
-| statistical | p-values / CI / effect-size vs. known results |
+| unit / integration | tools, DSL, handoffs |
+| statistical | p-values / CI / effect-size vs known |
 | agent | LLM JSON validity, plan viability |
 | security | injection, XSS, malformed files |
-| e2e on golden datasets | full pipeline output vs. ground truth |
+| e2e on golden datasets | full pipeline matches ground truth |
 
-**Golden datasets** (`tests/golden/fixtures/`, precomputed truth):
+**Golden datasets** (`tests/golden/fixtures/`):
 
-| Fixture | Tests |
-|---|---|
-| `sales_small` | baseline correctness (revenue = 10,000, orders = 100, AOV = 100) |
-| `sales_missing` | missingness detection + cleaning strategy |
-| `sales_outliers` | IQR outlier handling |
-| `sales_duplicates` | duplicate detection/removal |
-| `sales_injection` | security — untrusted cell content |
-| `sales_pii` | PII detection + redaction |
-| `hr`, `finance` | domain detection + domain-specific KPIs |
+| Fixture | Base data | What it tests | Expected |
+|---|---|---|---|
+| `sales_small` | clean, no issues | baseline correctness | revenue=10,000 · orders=100 · AOV=100 |
+| `sales_missing` | + injected MCAR/MAR gaps | missingness + cleaning strategy | totals match `sales_small` after flag/impute |
+| `sales_outliers` | + injected extreme values | IQR outlier handling | totals differ from `sales_small` (excluded, not zeroed) |
+| `sales_duplicates` | + exact duplicate rows | dedup | totals collapse to `sales_small` after dedup |
+| `sales_injection` | + SQL/script strings in cells | security (untrusted cell content) | neutralized, no code exec, no unescaped HTML |
+| `sales_pii` | + email/phone columns | PII detection + redaction | `pii_columns` populated; PII absent from LLM/logs |
+| `hr` | independent domain | domain detection + HR KPIs | `detected_domain: "hr"` |
+| `finance` | independent domain | domain detection + finance KPIs | `detected_domain: "finance"` |
 
-**Safety requirement:** on poisoned/corrupted golden cases, QA must never approve (false-approval rate = 0).
+**Safety requirement:** poisoned cases (wrong numbers / missing evidence) → QA must never approve (false-approval rate = 0).
 
----
-
-## 14. Status & Roadmap
-
-Per the spec's own §7: **"Production-oriented, not Production-ready."**
-
-Design considers solid: run isolation, PII handling, full-data compute, evidence chain, deterministic QA, guardrails, caching, retention policy.
-Still missing per the spec: strong evaluation harness, broad domain modules, hardened security, deeper observability — **and, as of this README, any actual implementation.**
-
-**Roadmap (from the spec, in order):**
-1. Golden-dataset evaluation suite — first gate to "production-ready"
-2. Domain modules (`analysis/domains/`) — folder stubs only; pipeline runs generic-only until filled
-3. Observability + cost dashboard panels
-4. Interactive charts (Plotly/Chart.js) + RTL/Arabic locale reports
-5. Forecasting / anomaly / NLP / cohort advanced metrics
+</details>
 
 ---
 
-*This README was generated from `Insight Forge — Implementation Guide` v4.3.0. It documents the planned design only. Regenerate from actual source once the repository contains real code.*
+*Generated from `Insight Forge — Implementation Guide` v4.3.0.*
