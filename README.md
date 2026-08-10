@@ -1,16 +1,10 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/status-design--spec%20%E2%80%94%20no%20code%20yet-orange" alt="status">
   <img src="https://img.shields.io/badge/framework-CrewAI-blue" alt="framework">
   <img src="https://img.shields.io/badge/spec%20version-4.3.0-lightgrey" alt="spec version">
 </p>
 
 <h1 align="center">Insight Forge</h1>
 <p align="center"><b>An 8-agent CrewAI pipeline that turns a raw CSV/XLSX into an evidence-grounded, QA-verified analytics report.</b></p>
-
----
-
-> ### ⚠️ This repository currently contains a design specification, not implemented code.
-> Everything below — file paths, agents, tools, schemas, commands — is the **planned** implementation, transcribed from `Insight Forge — Implementation Guide` v4.3.0. Nothing has been built yet. Once real source files exist, this README should be regenerated from the actual code.
 
 ---
 
@@ -113,8 +107,6 @@ Full guardrails, fallback semantics, and the deterministic QA verdict table → 
 
 ## Installation & usage
 
-> Not runnable yet — no `pyproject.toml`, `main.py`, or `.env.example` exist in the repository. Once implemented, per the spec:
-
 ```bash
 git clone <repository-url>
 cd insight-forge
@@ -131,7 +123,7 @@ Full test suite breakdown → [Full testing reference](#full-testing-reference) 
 
 ## Status & roadmap
 
-**Production-oriented, not production-ready** — and, as of this README, not yet implemented. Roadmap: golden-dataset evaluation suite → domain KPI modules → observability/cost dashboard → interactive charts + Arabic/RTL reports → forecasting & anomaly detection.
+**Production-oriented, not production-ready.** Roadmap: golden-dataset evaluation suite → domain KPI modules → observability/cost dashboard → interactive charts + Arabic/RTL reports → forecasting & anomaly detection.
 
 ---
 
