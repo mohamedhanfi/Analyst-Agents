@@ -1,7 +1,7 @@
 ﻿"""Unit tests for agents/ingestion_agent.run_ingestion (deterministic path).
 
 No API key required: use_crew=False exercises the full orchestration through
-the shared/core classes, covering the Â§2.1 deliverables: extracted CSV +
+the shared/core classes, covering the §2.1 deliverables: extracted CSV +
 data_profile.json + business_context.json under a run dir, multi-sheet sheet
 selection, Generic Mode fallback, PII redaction and failure handling.
 """

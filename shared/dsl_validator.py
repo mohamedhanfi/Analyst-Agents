@@ -103,8 +103,13 @@ def validate_operation(op: OpInput) -> List[str]:
     if function == "ratio":
         for field in ("numerator", "denominator"):
             if field in data:
-                nested = validate_operation(data[field])
-                errors.extend(f"{function}.{field}: {e}" for e in nested)
+                nested = data[field]
+                if not isinstance(nested, (dict, BaseModel)):
+                    errors.append(
+                        f"{function}.{field}: must be a DSL operation object")
+                    continue
+                nested_errors = validate_operation(nested)
+                errors.extend(f"{function}.{field}: {e}" for e in nested_errors)
 
     return errors
 

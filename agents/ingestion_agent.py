@@ -19,13 +19,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
-from crewai import Agent, Crew, LLM, Process, Task
+from crewai import Agent, Crew, Process, Task
 
 from shared.core.business_context import BusinessContextGatherer
 from shared.core.pii import PiiDetector
 from shared.core.profiler import DataProfiler
 from shared.core.reader import FileReader
 from shared.core.validation import FileValidator
+from shared.llm import build_llm
 from shared.logger import RunLogger
 from shared.schemas import BusinessContext, DataProfile
 from shared.tools import (
@@ -55,26 +56,13 @@ INGESTION_TOOLS = [
 # ---------------------------------------------------------------------------
 
 
-def build_llm(cfg: Dict[str, Any]) -> LLM:
-    llm_cfg = cfg.get("llm", {})
-    agent_cfg = cfg.get("agents", {}).get("ingestion", {})
-    return LLM(
-        model=agent_cfg.get("model")
-        or llm_cfg.get("model", "deepseek/deepseek-v4-flash"),
-        base_url=llm_cfg.get("base_url"),
-        api_key=llm_cfg.get("api_key"),
-        temperature=float(llm_cfg.get("temperature", 0.0)),
-        seed=int(llm_cfg.get("seed", 42)),
-    )
-
-
 def build_ingestion_agent(cfg: Dict[str, Any]) -> Agent:
     a_cfg = cfg["agents"]["ingestion"]
     return Agent(
         role=a_cfg["role"],
         goal=a_cfg["goal"],
         backstory=a_cfg["backstory"],
-        llm=build_llm(cfg),
+        llm=build_llm(cfg, "ingestion"),
         tools=INGESTION_TOOLS,
         verbose=False,
         memory=False,
@@ -372,7 +360,8 @@ def _parse_context_json(raw: str, file_name: str) -> BusinessContext:
 
 
 def _find_extracted_csv(run_dir: Path) -> Path | None:
-    csvs = sorted((run_dir / "data" / "extracted").glob("*.csv"))
+    csvs = sorted((run_dir / "data" / "extracted").glob("*.csv"),
+                  key=lambda p: p.stat().st_mtime, reverse=True)
     return csvs[0] if csvs else None
 
 

@@ -1,32 +1,32 @@
-# Insight Forge — Daily Task Plan (MK & MM)
+# Insight Forge — Task Plan (MK & MM)
 
-> Coordination + handoff document. **One task per day, alternating owners.**
-> Day 1 → **MK**, Day 2 → **MM**, Day 3 → **MK**, ... *(swap the names if you want MM to start instead)*
+> Coordination + handoff document. **One task at a time, alternating owners.**
+> Task 1 → **MK**, Task 2 → **MM**, Task 3 → **MK**, ... *(swap the names if you want MM to start instead)*
 >
 > Spec: [`Analyst-Agents.md`](./Analyst-Agents.md) (v4.3) · Structure: [`PROJECT_STRUCTURE.md`](./PROJECT_STRUCTURE.md)
-> This file is **the source of truth for who does what and what is done**. Update it every day before you commit.
+> This file is **the source of truth for who does what and what is done**. Update it every time you finish a task.
 
 ---
 
 ## 📏 Rules of the game
 
-1. **One task per day.** Each of us works a full day, finishes the task, then hands off.
-2. **Start of your day (before touching code):**
-   - `git pull` (get your partner's work from yesterday).
+1. **One task at a time.** The owner finishes the task, then hands off.
+2. **Before touching code:**
+   - `git pull` (get your partner's work from the previous task).
    - Read the **Handoff Log** below — anything that affects you is written there.
    - Run `pytest tests/unit -q` — baseline must be green before you start.
-3. **Mid-day:** if you change anything that affects a **future** task (a shared signature, schema field, path, config key, tool name) → append a Handoff Log row **immediately**, not at the end of the day.
-4. **End of your day (before leaving):**
-   - Finish the day's task → mark `Done when` checklist ✓ in the task table.
+3. **Mid-task:** if you change anything that affects a **future** task (a shared signature, schema field, path, config key, tool name) → append a Handoff Log row **immediately**, not at the end of the task.
+4. **Before finishing a task:**
+   - Finish the task → mark `Done when` checklist ✓ in the task table.
    - Run `pytest tests/unit -q` once more (and any new tests you wrote).
-   - Append a Handoff Log row for the day.
+   - Append a Handoff Log row for the task.
    - Update **Current state snapshot**.
    - `git add` + commit with a clear message + `git push`.
 5. **Commit message format (no more `V1`, `5`, `00`, `**`):**
    ```
    feat(stage-1): validate + extract + profile wiring
    fix(shared/dsl_validator): reject unknown function names
-   docs(DAILY_TASKS): day 3 handoff notes
+   docs(DAILY_TASKS): task 3 handoff notes
    test(stage-5a): correlation p-value vs scipy reference
    ```
 6. **Never commit:** `.env`, `runs/*` (except `runs/_template/`), `cache/*` — already in `.gitignore`.
@@ -45,13 +45,13 @@ The system Python has no deps. Everything runs in the `py312_env` conda env:
 
 Installed: `crewai 1.15.11 · pandas 3.0.3 · pydantic 2.12.5 · pytest 8.4.2`. The API key lives in `.env` (gitignored, never committed) — if you pull a fresh checkout, copy `.env.example` → `.env` and paste your `OPENROUTER_API_KEY`.
 
-### 1. Start of your day — before touching code
+### 1. Before touching code
 
-1. `git pull` — get your partner's work from yesterday. If it says *behind*, pull again before committing.
+1. `git pull` — get your partner's work from the previous task. If it says *behind*, pull again before committing.
 2. Read the **Handoff Log** — anything affecting your task is written there.
-3. Run the test command above — baseline must be green (currently **102 passed**) before you start.
+3. Run the test command above — baseline must be green before you start.
 
-### 2. Reproduce the current code (Stage 1, Day 2)
+### 2. Reproduce the current code (Task 2, Stage 1)
 
 | Command | What it does |
 |---|---|
@@ -66,14 +66,14 @@ Every run creates a fresh `runs/run_<YYYYmmdd_HHMMSS>_<seq>/` with:
 
 ### 3. Conflict-free rules — how we never collide
 
-1. **One task per day**, owner in the Task table. Don't edit files owned by another day's task unless the Handoff Log says it's required.
+1. **One task at a time**, owner in the Task table. Don't edit files owned by another task unless the Handoff Log says it's required.
 2. `git pull` at the start, `git commit` + `git push` at the end. Never push stale work; never force-push.
 3. **Commit only the files you changed.** Never stage `.env`, `runs/*`, `cache/*` — they are gitignored.
-4. Shared contracts (schema fields, tool names, config keys, paths) change **only** with a Handoff Log note the same day — mid-day, not at the end.
+4. Shared contracts (schema fields, tool names, config keys, paths) change **only** with a Handoff Log note the same task — mid-task, not at the end.
 5. Baseline stays green: run `pytest tests/unit -q` **before starting** and **again before committing**.
 6. Commit message format from **Rules §5** (e.g. `feat(stage-2): understanding agent + DSL plan builder + tests`).
 
-### 4. Handoff contract — Day 3 (Stage 2 Understanding)
+### 4. Handoff contract — Task 3 (Stage 2 Understanding)
 
 - **Inputs you consume:** `runs/<run_id>/metadata/data_profile.json` + `runs/<run_id>/knowledge/business_context.json` + the **20-row PII-redacted** `profile.sample` (never raw cells — golden rule).
 - **Follow the same pattern as Stage 1:**
@@ -89,11 +89,11 @@ Every run creates a fresh `runs/run_<YYYYmmdd_HHMMSS>_<seq>/` with:
 
 > `Owner` follows strict alternation. Adjust the table if you change the starting owner or the number of tasks.
 
-| Day | Owner | Task | What to do today | Done when |
-|-----|-------|------|------------------|-----------|
+| # | Owner | Task | What to do | Done when |
+|---|-------|------|-----------|-----------|
 | 1 | MK | ✅ **Contracts — DSL + schemas 5–8** *(DONE)* | Implement `shared/dsl_validator.py` (whitelist: `sum mean median count nunique min max std growth correlation ratio` + parameter validation per §2.5 function signatures; reject anything outside the whitelist — no freeform formulas). Extend `shared/schemas.py` with stage 5–8 models: KPI result, statistical results, chart metadata, evidence entry + registry, insight + recommendation, report result, QA verdict (Pydantic v2, same style as existing file). Write `tests/unit/test_dsl_validator.py` + a schema round-trip test. | ✅ Done — `pytest -q` green (94 passed); non-whitelisted ops rejected; schemas round-trip cleanly. |
 | 2 | MM | ✅ **Stage 1 — `agents/ingestion_agent.py`** *(DONE)* | Build the first CrewAI agent (role/goal/backstory from `config.yaml` `agents.ingestion`). Tasks: `validate_and_extract` (file_validator_tool → file_reader_tool; XLSX multi-sheet → pick via `business_context.sheet_used` → file_sheet_extract_tool) · `profile_dataset` (pii_detector_tool → data_profiler_tool) · `gather_business_context` (human_input_tool / BusinessContextGatherer, Generic Mode on timeout). Allocate `run_id`, wire `RunLogger`, write outputs under `runs/<run_id>/`. **Never pass raw cell content to the LLM.** | ✅ Done — deterministic + `--crew` runs on CSV & XLSX produce all 3 outputs; multi-sheet asks user (fallback: largest sheet); 8 unit tests green. |
-| 3 | MK | **Stage 2 — Understanding + DSL tools** | Add `column_profiler_tool` (per-column facts: dtype / nunique / nullable — role rules from §2.2) to `shared/tools/`. Add `domain_classifier_tool` (profiled facts the LLM uses to name domain/entities) and `dsl_plan_builder_tool` (validates the LLM's proposed KPIs against `shared/dsl_validator.py`, normalizes into `AnalysisPlan`). Implement `agents/understanding_agent.py`: `classify_column_roles` → `detect_domain_and_entities` → `build_analysis_plan` (2nd task, same agent — **not** a 9th agent). Outputs `dataset_understanding.json` + `analysis_plan.json`. | Outputs match the §2.2 examples; plan emits whitelist ops only; unit tests for role rules. |
+| 3 | MK | ✅ **Stage 2 — Understanding + DSL tools** *(DONE)* | Add `column_profiler_tool` (per-column facts: dtype / nunique / nullable — role rules from §2.2) to `shared/tools/`. Add `domain_classifier_tool` (profiled facts the LLM uses to name domain/entities) and `dsl_plan_builder_tool` (validates the LLM's proposed KPIs against `shared/dsl_validator.py`, normalizes into `AnalysisPlan`). Implement `agents/understanding_agent.py`: `classify_column_roles` → `detect_domain_and_entities` → `build_analysis_plan` (2nd task, same agent — **not** a 9th agent). Outputs `dataset_understanding.json` + `analysis_plan.json`. | ✅ Done — outputs match the §2.2 example shape (live deterministic run on CSV); plan emits whitelist ops only (rejected `evil`/bad ratios in tests); role rules unit-tested; `_finalize_understanding` Python-authoritative with deterministic fallbacks; suite green (157 passed). |
 | 4 | MM | **Stage 3 — `agents/data_quality.py`** (deterministic, no LLM) | Plain functions (no CrewAI) invoked later by `flows.py`. Checks per §2.3: schema · invalid values (impossible dates, negative revenue, % >100, age=350) · missingness MCAR/MAR/MNAR · duplicates · referential integrity · business rules · units/encoding. Deterministic repair per the §2.3 table (cast types, drop exact dupes, drop impossible rows — **never sign-flip, never invent data**). Wrap each check as a tool in `shared/tools/` (schema_checker, invalid_value_checker, missingness_analyzer, duplicate_detector, referential_integrity, deterministic_repair). Output `data_quality_report.json`. | Report JSON per §2.3 (`passed` / `needs_repair`); repair obeys the table; unit tests for every check + repair. |
 | 5 | MK | **Stage 4 — `agents/cleaning_agent.py`** | LLM picks a strategy JSON (`decide_cleaning_strategy`); Python executes. Tools: cleaning_strategy, fillna, flag_column (`*_missing_flag`), type_caster, dedup, iqr_outlier, dq_recheck. Implement the missing-value strategy table §2.4 (role × missingness type) incl. `flag_and_preserve`. Version re-run attempts as `cleaned_data_attempt_<n>.csv` (v4.3). Re-check DQ on output; re-run logic up to `limits.cleaning_max_rechecks` (3). Outputs `data/processed/cleaned_data.csv` + `metadata/cleaning_result.json`. | Cleaned data + `cleaning_result.json`; strategy matches §2.4; recheck loop works; unit tests. |
 | 6 | MM | **Stage 5a — Analysis compute layer** | `analysis/evidence.py` — evidence_id minting + registry read/write (**the only writer**). `analysis/generic/` — descriptive (mean/median/std/quantiles/IQR/skew/kurtosis), correlation (Pearson + **p-value + CI + effect size + n**, Spearman), distribution (histograms, Freedman–Diaconis bins), trend (YoY/MoM/WoW, rolling, seasonality). `analysis/chart_planner.py` — §2.5 rule table → chart kind + `reason` (+ `reliability: low_n` fallback). Tools: dsl_executor_tool (executes whitelist ops over **all rows**), statistical_suite_tool, chart_planner_tool. | Every DSL op unit-tested against known values; correlation numbers match scipy/statsmodels; planner picks kinds per the table. |
@@ -108,37 +108,37 @@ Every run creates a fresh `runs/run_<YYYYmmdd_HHMMSS>_<seq>/` with:
 
 ## 📋 Handoff log
 
-> Fill one row at the **end of every day** (and mid-day when you change something that affects a future task).
-> Format: `day | owner | task | what changed | affects next task | tests green?`
+> Fill one row at the **end of every task** (and mid-task when you change something that affects a future task).
+> Format: `# | owner | task | what changed | affects next task | tests green?`
 
-| Day | Owner | Task | What changed (file → what) | Affects next task | Tests green? |
-|-----|-------|------|----------------------------|-------------------|--------------|
-| 1 | MK | Contracts | `shared/dsl_validator.py` → whitelist + semantic validator (`validate_operation` / `validate_plan`); `shared/schemas.py` → added stage 5–8 models (KPI result, statistical results, chart metadata, evidence, insight, recommendation, report result, QA verdict); **`DslOperation.basis` default moved to `None`** (was `"previous_period"` — polluted every op's `model_dump`; executor applies the default at runtime); `tests/unit/test_dsl_validator.py` (27) + `tests/unit/test_schemas.py` (16) added | Day 2+ import these; **Day 6 growth executor must default `basis` → `previous_period` when absent** | ✅ 94 passed |
-| 2 | MM | Stage 1 | `agents/ingestion_agent.py` → `build_ingestion_agent()` / `build_ingestion_tasks()` (3 CrewAI Tasks) + `run_ingestion(file, use_crew=True|False)` + CLI (`python -m agents.ingestion_agent <file> [--crew]`); run_id + `RunLogger` wired; **`shared/core/business_context.py` → EOFError on stdin now returns Generic Mode** (was ugly thread traceback); crew path `_finalize_profile` **recomputes file_hash/file_name in Python** (LLM tool args untrusted — golden rule); multi-sheet crew description falls back to **largest sheet** on empty/timeout answer | Day 3+ imports these; **Understanding (Day 3) consumes `data_profile.json` + `business_context.json` + 20-row sample** | ✅ 102 passed |
-| 3 | MK | Stage 2 | *(fill at end of day)* | | |
-| 4 | MM | Stage 3 | *(fill at end of day)* | | |
-| 5 | MK | Stage 4 | *(fill at end of day)* | | |
-| 6 | MM | Stage 5a | *(fill at end of day)* | | |
-| 7 | MK | Stage 5b | *(fill at end of day)* | | |
-| 8 | MM | Stage 6 | *(fill at end of day)* | | |
-| 9 | MK | Stage 7 | *(fill at end of day)* | | |
-| 10 | MM | Stage 8 | *(fill at end of day)* | | |
-| 11 | MK | Orchestration | *(fill at end of day)* | | |
-| 12 | MM | Tests & golden | *(fill at end of day)* | | |
+| # | Owner | Task | What changed (file → what) | Affects next task | Tests green? |
+|---|-------|------|----------------------------|-------------------|--------------|
+| 1 | MK | Contracts | `shared/dsl_validator.py` → whitelist + semantic validator (`validate_operation` / `validate_plan`); `shared/schemas.py` → added stage 5–8 models (KPI result, statistical results, chart metadata, evidence, insight, recommendation, report result, QA verdict); **`DslOperation.basis` default moved to `None`** (was `"previous_period"` — polluted every op's `model_dump`; executor applies the default at runtime); `tests/unit/test_dsl_validator.py` (27) + `tests/unit/test_schemas.py` (16) added | Task 2+ import these; **Task 6 growth executor must default `basis` → `previous_period` when absent** | ✅ 94 passed |
+| 2 | MM | Stage 1 | `agents/ingestion_agent.py` → `build_ingestion_agent()` / `build_ingestion_tasks()` (3 CrewAI Tasks) + `run_ingestion(file, use_crew=True|False)` + CLI (`python -m agents.ingestion_agent <file> [--crew]`); run_id + `RunLogger` wired; **`shared/core/business_context.py` → EOFError on stdin now returns Generic Mode** (was ugly thread traceback); crew path `_finalize_profile` **recomputes file_hash/file_name in Python** (LLM tool args untrusted — golden rule); multi-sheet crew description falls back to **largest sheet** on empty/timeout answer | Task 3+ imports these; **Understanding (Task 3) consumes `data_profile.json` + `business_context.json` + 20-row sample** | ✅ 102 passed |
+| 3 | MK | Stage 2 | **new** `shared/core/understanding.py` → `ColumnProfiler` + §2.2 role rules, `build_domain_facts`, `build_analysis_plan` (gates every KPI through `dsl_validator.validate_operation`, drops invalid + logs reasons, whitelist statistical tests), `apply_role_overrides` (LLM may reclassify into alternates/identifier only — Python authoritative), `detect_domain_heuristic` (keyword scan of context answers; generic → `("generic", 0.0)`), `default_plan` (deterministic whitelist plan from profile), `assemble_understanding`; **new** `shared/tools/understanding.py` → `column_profiler_tool` · `domain_classifier_tool` · `dsl_plan_builder_tool` (all JSON-metadata only, never raw cells); **new** `agents/understanding_agent.py` → 3 Tasks in ONE agent + `run_understanding(run_dir, use_crew=...)` + CLI (`python -m agents.understanding_agent <run_dir> [--crew]`) + `_finalize_understanding` (Python-authoritative, LLM failure → deterministic fallback + log warning); **new** `shared/llm.py` → single `build_llm(cfg, agent_name)` factory; **`agents/ingestion_agent.py` refactored** to import it (local `build_llm` removed) — Task-2 file touched; **`shared/core/business_context.py` → input returning `None` now = Generic Mode** (was `NoneType.strip` crash when stdin unavailable); **new `tests/Flow_review/app.py` + `index.html` → live web flow viewer** (stdlib only, `python tests/Flow_review/app.py [--demo] [--port]`; uploads a file, runs ingestion → understanding live, renders stage cards + live event trail from run.jsonl + artifact previews; stages 3-8 appear as dimmed "Task N" cards and light up automatically as they land); tests: +55 unit (role rules, domain facts, plan builder, understanding core, agent deterministic + finalize, llm factory, business_context None) | Task 4 consumes `dataset_understanding.json`; **future agents use `shared.llm.build_llm(cfg, "<agent>")` — do NOT copy a local build_llm**; **Task 6 growth executor: default `basis` → `previous_period` when absent**; **Flow_review shows new stages automatically once they write to run.jsonl — no changes needed** | ✅ 157 passed |
+| 4 | MM | Stage 3 | *(fill at end of task)* | | |
+| 5 | MK | Stage 4 | *(fill at end of task)* | | |
+| 6 | MM | Stage 5a | *(fill at end of task)* | | |
+| 7 | MK | Stage 5b | *(fill at end of task)* | | |
+| 8 | MM | Stage 6 | *(fill at end of task)* | | |
+| 9 | MK | Stage 7 | *(fill at end of task)* | | |
+| 10 | MM | Stage 8 | *(fill at end of task)* | | |
+| 11 | MK | Orchestration | *(fill at end of task)* | | |
+| 12 | MM | Tests & golden | *(fill at end of task)* | | |
 
 ---
 
 ## 📌 Current state snapshot
 
-> Update this every evening before pushing.
+> Update this every time you finish a task.
 
-- **Last finished task:** Day 2 — Stage 1 Ingestion — ✅ done; deterministic + live `--crew` runs verified on CSV & XLSX (largest-sheet fallback, generic mode, Python-authoritative hashes), `102 passed in ~12s`
-- **Last commit:** `d977192 feat(stage-1): ingestion agent + crew run + tests` (pushed) — this doc's workflow section is the follow-up
-- **Baseline tests:** 102 passing in `tests/unit/` (94 + 8 ingestion) — `& "C:\Users\Malik\miniconda3\envs\py312_env\python.exe" -m pytest tests/unit -q`
-- **Working tree:** only this doc updated (workflow section) — commit + push before Day 3; `.env` is local + gitignored (OpenRouter key)
+- **Last finished task:** Task 3 — Stage 2 Understanding — ✅ done; deterministic Stage 1 → Stage 2 run verified end-to-end on a CSV (roles per §2.2, whitelist-only plan, generic domain when no terminal input); `_finalize_understanding` falls back deterministically when the LLM output is garbage; **`157 passed in ~10s`**
+- **Last commit:** `d977192 feat(stage-1): ingestion agent + crew run + tests` (pushed) — Task 3 work is **uncommitted**
+- **Baseline tests:** 157 passing in `tests/unit/` (94 + 8 ingestion + 55 task 3)
+- **Working tree:** Task 3 changes uncommitted — `shared/core/understanding.py` · `shared/tools/understanding.py` · `agents/understanding_agent.py` · `shared/llm.py` (+ ingestion_agent refactor + business_context None-fix) · 6 new test files · this doc — commit + push before Task 4; `.env` is local + gitignored (OpenRouter key)
 - **Open items / decisions:**
-  - Day 3 Understanding: consume `data_profile.json` + `business_context.json` + the 20-row PII-redacted `sample` (never raw cells)
-  - Day 6 growth executor: default `basis` → `previous_period` when absent
-  - `config.yaml` `agents.qa.model` still `TODO` — needs a distinct QA model before Day 10
+  - Task 4 Data Quality: consume `dataset_understanding.json` + `data_profile.json` + `business_context.json` + raw sample (never raw cells)
+  - Task 6 growth executor: default `basis` → `previous_period` when absent
+  - `config.yaml` `agents.qa.model` still `TODO` — needs a distinct QA model before Task 10
   - Use `py312_env` (pydantic 2.12.5, pandas 3.0.3, pytest 8.4.2, crewai 1.15.11); system Python lacks deps
   - `runs/` demo runs from today are gitignored (retention policy will sweep them)

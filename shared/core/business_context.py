@@ -98,7 +98,10 @@ class BusinessContextGatherer:
         thread.join(remaining)
         if thread.is_alive():
             return None
-        return box.get("value", "").strip()
+        value = box.get("value")
+        if value is None:
+            return None
+        return str(value).strip()
 
     @staticmethod
     def _recompute_deadline(_deadline: float) -> float:

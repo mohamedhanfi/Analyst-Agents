@@ -9,6 +9,11 @@ from shared.tools.file_io import (
 )
 from shared.tools.human import human_input_tool
 from shared.tools.profiling import data_profiler_tool, pii_detector_tool
+from shared.tools.understanding import (
+    column_profiler_tool,
+    dsl_plan_builder_tool,
+    domain_classifier_tool,
+)
 
 __all__ = [
     "file_validator_tool",
@@ -17,4 +22,7 @@ __all__ = [
     "pii_detector_tool",
     "data_profiler_tool",
     "human_input_tool",
+    "column_profiler_tool",
+    "domain_classifier_tool",
+    "dsl_plan_builder_tool",
 ]

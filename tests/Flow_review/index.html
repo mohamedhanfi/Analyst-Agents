@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Insight Forge — Flow Review</title>
+<style>
+  :root {
+    --bg: #0b1220; --panel: #111a2e; --panel2: #16213a;
+    --line: #243353; --text: #dbe4f3; --muted: #8494b8;
+    --green: #34d399; --red: #f87171; --amber: #fbbf24;
+    --blue: #60a5fa; --violet: #a78bfa; --pulse: rgba(96,165,250,.55);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+           padding: 14px 22px; background: var(--panel);
+           border-bottom: 1px solid var(--line); position: sticky; top: 0; }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: .3px; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1; }
+  button { background: var(--blue); color: #061224; border: 0;
+           border-radius: 8px; padding: 8px 14px; font-weight: 700;
+           cursor: pointer; font-size: 13px; }
+  button:disabled { background: var(--line); color: var(--muted);
+                    cursor: not-allowed; }
+  input[type=file] { color: var(--muted); font-size: 12px; max-width: 240px; }
+  #badge { border-radius: 999px; padding: 5px 12px; font-size: 12px;
+           font-weight: 700; border: 1px solid var(--line);
+           color: var(--muted); }
+  #badge.running { color: var(--blue); border-color: var(--blue);
+                   animation: blink 1s infinite; }
+  #badge.done { color: var(--green); border-color: var(--green); }
+  #badge.failed { color: var(--red); border-color: var(--red); }
+  @keyframes blink { 50% { opacity: .35; } }
+
+  main { padding: 22px; display: flex; flex-direction: column; gap: 20px; }
+
+  .pipe { display: flex; align-items: stretch; gap: 0; overflow-x: auto;
+          padding-bottom: 6px; }
+  .pipe .arrow { align-self: center; color: var(--muted); font-size: 18px;
+                 padding: 0 2px; }
+  .stage { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 12px; padding: 10px 12px; min-width: 132px;
+           text-align: center; position: relative; }
+  .stage .num { position: absolute; top: 6px; left: 8px; font-size: 10px;
+                color: var(--muted); }
+  .stage .name { font-size: 12.5px; font-weight: 700; margin-top: 8px; }
+  .stage .task { font-size: 10px; color: var(--muted); margin-top: 3px; }
+  .stage .dot { width: 12px; height: 12px; border-radius: 50%;
+                margin: 8px auto 0; background: var(--line);
+                box-shadow: 0 0 0 3px rgba(0,0,0,.25); }
+  .stage.pending { opacity: .55; }
+  .stage.running { border-color: var(--blue); }
+  .stage.running .dot { background: var(--blue);
+                        box-shadow: 0 0 0 0 var(--pulse);
+                        animation: ping 1.1s infinite; }
+  .stage.passed { border-color: var(--green); }
+  .stage.passed .dot { background: var(--green); }
+  .stage.failed { border-color: var(--red); }
+  .stage.failed .dot { background: var(--red); }
+  .stage.skipped .dot { background: var(--amber); }
+  .stage .dur { font-size: 10px; color: var(--muted); margin-top: 5px; }
+  @keyframes ping { 70% { box-shadow: 0 0 0 10px transparent; }
+                    100% { box-shadow: 0 0 0 0 transparent; } }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 12px; padding: 14px 16px; }
+  .panel h2 { font-size: 13px; margin: 0 0 10px; text-transform: uppercase;
+              letter-spacing: .8px; color: var(--muted); }
+
+  #timeline { max-height: 420px; overflow-y: auto; font-size: 12.5px;
+              display: flex; flex-direction: column; gap: 4px; }
+  .ev { display: flex; gap: 8px; align-items: baseline; padding: 3px 6px;
+        border-radius: 6px; background: var(--panel2); }
+  .ev .t { color: var(--muted); font-variant-numeric: tabular-nums;
+           font-size: 11px; }
+  .ev .tag { font-weight: 700; min-width: 92px; font-size: 11px; }
+  .ev.stage_start .tag { color: var(--blue); }
+  .ev.stage_end .tag { color: var(--green); }
+  .ev.tool_call .tag { color: var(--violet); }
+  .ev.llm_call .tag { color: var(--violet); }
+  .ev.info .tag { color: var(--green); }
+  .ev.fallback .tag { color: var(--amber); }
+  .ev.error .tag { color: var(--red); }
+  .ev .msg { color: var(--text); word-break: break-word; }
+
+  #artifacts { display: flex; flex-direction: column; gap: 8px;
+               max-height: 420px; overflow-y: auto; }
+  details { background: var(--panel2); border-radius: 8px; overflow: hidden; }
+  summary { cursor: pointer; padding: 8px 12px; font-size: 12.5px;
+            font-weight: 700; color: var(--blue); }
+  summary .meta { color: var(--muted); font-weight: 400; float: right; }
+  pre { margin: 0; padding: 10px 12px; background: #0a1120; font-size: 11px;
+        overflow-x: auto; color: #a5f3fc; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .empty { color: var(--muted); font-size: 12.5px; padding: 10px 4px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Insight Forge — Flow Review</h1>
+    <div class="sub">watch the pipeline move: stage by stage, agent by agent</div>
+  </div>
+  <div class="spacer"></div>
+  <input type="file" id="file" accept=".csv,.xlsx">
+  <button id="start">Run pipeline</button>
+  <span id="badge">idle</span>
+</header>
+
+<main>
+  <div class="pipe" id="pipe"></div>
+
+  <div class="cols">
+    <div class="panel">
+      <h2>Live event trail <span class="hint">(run.jsonl — every stage writes
+        to the same audit log)</span></h2>
+      <div id="timeline"><div class="empty">Waiting for a run…</div></div>
+    </div>
+    <div class="panel">
+      <h2>Artifacts — data moving between stages</h2>
+      <div id="artifacts"><div class="empty">Artifacts appear here as each
+        stage finishes.</div></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const EV_KINDS = new Set(["stage_start","stage_end","tool_call","llm_call",
+                          "info","fallback","error"]);
+
+let seenArtifacts = new Set();
+let clientOffset = 0;
+
+function renderPipeline(stages, status) {
+  const pipe = $("pipe");
+  pipe.innerHTML = "";
+  stages.forEach((s, i) => {
+    if (i > 0) {
+      const a = document.createElement("span");
+      a.className = "arrow"; a.textContent = "→";
+      pipe.appendChild(a);
+    }
+    const el = document.createElement("div");
+    el.className = "stage " + (s.implemented ? status[s.id] : "pending");
+    el.innerHTML =
+      '<div class="num">' + s.num + '</div>' +
+      '<div class="name">' + s.name + '</div>' +
+      (s.implemented ? "" : '<div class="task">Task ' + s.task + ' — planned</div>') +
+      '<div class="dot"></div>' +
+      (status[s.id] === "passed" && statusDur[s.id]
+        ? '<div class="dur">' + statusDur[s.id].toFixed(1) + "s</div>" : "");
+    pipe.appendChild(el);
+  });
+}
+
+const statusDur = {};
+
+function renderEvents(events) {
+  const tl = $("timeline");
+  if (events.length && tl.querySelector(".empty")) tl.innerHTML = "";
+  for (const e of events) {
+    const row = document.createElement("div");
+    const kind = EV_KINDS.has(e.kind) ? e.kind : "info";
+    row.className = "ev " + kind;
+    const tag = kind === "stage_start" ? "▶ " + e.stage
+              : kind === "stage_end" ? "■ " + e.stage + " " + (e.status || "")
+              : e.tool || e.kind;
+    const msg = e.message || "";
+    const extra = (e.duration_s != null)
+      ? "  [" + e.duration_s.toFixed(2) + "s]" : "";
+    row.innerHTML = '<span class="t">' + (e.ts || "") + '</span>' +
+      '<span class="tag">' + tag + '</span>' +
+      '<span class="msg">' + msg + extra + '</span>';
+    tl.appendChild(row);
+  }
+  tl.scrollTop = tl.scrollHeight;
+}
+
+const ARTIFACTS = {
+  ingestion: ["data/extracted/", "metadata/data_profile.json",
+              "knowledge/business_context.json"],
+  understanding: ["metadata/dataset_understanding.json",
+                  "metadata/analysis_plan.json"],
+};
+
+function renderArtifacts(events) {
+  const finished = events.filter(e => e.kind === "stage_end" && e.status === "passed");
+  for (const ev of finished) {
+    const rels = ARTIFACTS[ev.stage] || [];
+    for (const rel of rels) renderArtifact(ev.stage, rel);
+  }
+}
+
+async function renderArtifact(stage, rel) {
+  const key = stage + ":" + rel;
+  if (seenArtifacts.has(key)) return;
+  seenArtifacts.add(key);
+  const box = $("artifacts");
+  box.querySelector(".empty")?.remove();
+  const res = await fetch("/api/artifact?rel=" + encodeURIComponent(rel));
+  const data = await res.json();
+  if (data.error) return;
+  const det = document.createElement("details");
+  det.open = true;
+  const label = rel.split("/").pop();
+  let body = "";
+  if (data.content !== undefined) {
+    body = JSON.stringify(data.content, null, 2);
+    det.innerHTML = '<summary>' + stage + " / " + label +
+      '<span class="meta">' + (body.length / 1024).toFixed(1) + " KB</span></summary>" +
+      "<pre>" + escapeHtml(body) + "</pre>";
+  } else if (data.preview !== undefined) {
+    det.innerHTML = '<summary>' + stage + " / " + label +
+      '<span class="meta">first rows</span></summary>' +
+      "<pre>" + escapeHtml(data.preview.join("\n")) + "</pre>";
+  } else if (data.dir !== undefined) {
+    det.innerHTML = '<summary>' + stage + " / " + label +
+      '<span class="meta">' + data.files.length + " file(s)</span></summary>" +
+      "<pre>" + escapeHtml(data.files.join("\n")) + "</pre>";
+  }
+  box.prepend(det);
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+async function startRun() {
+  const file = $("file").files[0];
+  if (!file) { alert("Pick a CSV or XLSX file first."); return; }
+  $("start").disabled = true;
+  $("badge").className = "running"; $("badge").textContent = "starting";
+  seenArtifacts.clear();
+  const res = await fetch("/api/start?name=" + encodeURIComponent(file.name),
+                          { method: "POST", body: file });
+  const data = await res.json();
+  if (!data.ok) { alert(data.error || "start failed"); resetHeader(); }
+}
+
+function resetHeader() {
+  $("start").disabled = false;
+  $("badge").className = ""; $("badge").textContent = "idle";
+}
+
+async function poll() {
+  try {
+    const st = await (await fetch("/api/state?offset=" + clientOffset)).json();
+    if (typeof st.offset === "number") clientOffset = st.offset;
+    renderPipeline(st.stages, st.stage_status, st.stage_duration);
+    Object.assign(statusDur, st.stage_duration || {});
+    renderEvents(st.events || []);
+    renderArtifacts(st.events || []);
+    if (st.error) {
+      $("badge").className = "failed"; $("badge").textContent = "failed";
+      $("start").disabled = false;
+    } else if (st.busy) {
+      $("badge").className = "running"; $("badge").textContent = "running";
+      $("start").disabled = true;
+    } else if (st.run_id) {
+      const all = Object.values(st.stage_status);
+      const done = all.filter(s => s === "passed").length;
+      const failed = all.filter(s => s === "failed").length;
+      $("badge").className = failed ? "failed" : "done";
+      $("badge").textContent = failed ? "finished — failed"
+                                      : "finished — " + done + " stage(s) passed";
+      $("start").disabled = false;
+    }
+  } catch (_) { /* server restarting */ }
+}
+
+$("start").addEventListener("click", startRun);
+renderPipeline([{num:1,name:"…",implemented:false},
+                {num:2,name:"…",implemented:false}],
+               {ingestion:"pending",understanding:"pending"});
+setInterval(poll, 700);
+poll();
+</script>
+</body>
+</html>

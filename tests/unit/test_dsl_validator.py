@@ -121,6 +121,27 @@ def test_nested_ratio_recursion_validates_inner_ops():
     assert any("missing required field 'column'" in e for e in errors)
 
 
+@pytest.mark.parametrize("field,value", [
+    ("numerator", "sum"),
+    ("denominator", 42),
+])
+def test_ratio_nested_non_dict_returns_errors(field, value):
+    op = {"function": "ratio",
+          "numerator": {"function": "sum", "column": "revenue"},
+          "denominator": {"function": "count", "column": "order_id"}}
+    op[field] = value
+    errors = validate_operation(op)
+    assert any(f"{field}: must be a DSL operation object" in e for e in errors)
+
+
+def test_ratio_nested_none_treated_as_missing():
+    op = {"function": "ratio",
+          "numerator": {"function": "sum", "column": "revenue"},
+          "denominator": None}
+    errors = validate_operation(op)
+    assert any("missing required field 'denominator'" in e for e in errors)
+
+
 def test_accepts_dsl_operation_instance():
     op = DslOperation(function="sum", column="revenue", group_by=["category"])
     assert validate_operation(op) == []

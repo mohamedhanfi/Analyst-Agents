@@ -53,6 +53,14 @@ def test_generic_on_first_empty():
     assert ctx.generic_mode
 
 
+def test_generic_on_none_input_return():
+    ctx = BusinessContextGatherer(timeout_seconds=30,
+                                  input_func=lambda _: None) \
+        .gather("f.xlsx")
+    assert ctx.generic_mode
+    assert ctx.context_confidence == 0
+
+
 def test_save_writes_json(tmp_path):
     ctx = BusinessContextGatherer(timeout_seconds=30,
                                   input_func=_fake_input(
