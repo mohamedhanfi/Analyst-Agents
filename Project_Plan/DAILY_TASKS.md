@@ -33,6 +33,58 @@
 
 ---
 
+## 🚀 Daily workflow — follow this exactly (keeps the project conflict-free)
+
+### 0. Environment — use ONLY this interpreter
+
+The system Python has no deps. Everything runs in the `py312_env` conda env:
+
+```
+& "C:\Users\Malik\miniconda3\envs\py312_env\python.exe" -m pytest tests/unit -q
+```
+
+Installed: `crewai 1.15.11 · pandas 3.0.3 · pydantic 2.12.5 · pytest 8.4.2`. The API key lives in `.env` (gitignored, never committed) — if you pull a fresh checkout, copy `.env.example` → `.env` and paste your `OPENROUTER_API_KEY`.
+
+### 1. Start of your day — before touching code
+
+1. `git pull` — get your partner's work from yesterday. If it says *behind*, pull again before committing.
+2. Read the **Handoff Log** — anything affecting your task is written there.
+3. Run the test command above — baseline must be green (currently **102 passed**) before you start.
+
+### 2. Reproduce the current code (Stage 1, Day 2)
+
+| Command | What it does |
+|---|---|
+| `& "<py312>\python.exe" -m agents.ingestion_agent <file.csv/xlsx>` | Deterministic run — no LLM, no key. Same outputs. |
+| `& "<py312>\python.exe" -m agents.ingestion_agent <file> --crew` | Real CrewAI agent run (needs the key). |
+| `--run-dir <path>` | Write into an existing run dir instead of allocating a new one. |
+
+Every run creates a fresh `runs/run_<YYYYmmdd_HHMMSS>_<seq>/` with:
+`data/extracted/` (CSV) · `metadata/data_profile.json` · `knowledge/business_context.json` · `logs/run.jsonl` (audit trail).
+
+**Run the `--crew` version in a real terminal** (not through tool output) so the user can answer the sheet / business questions interactively. If no terminal input is available, the run degrades cleanly to **Generic Mode** (`generic_mode: true`, multi-sheet XLSX falls back to the **largest sheet**) — never blocks.
+
+### 3. Conflict-free rules — how we never collide
+
+1. **One task per day**, owner in the Task table. Don't edit files owned by another day's task unless the Handoff Log says it's required.
+2. `git pull` at the start, `git commit` + `git push` at the end. Never push stale work; never force-push.
+3. **Commit only the files you changed.** Never stage `.env`, `runs/*`, `cache/*` — they are gitignored.
+4. Shared contracts (schema fields, tool names, config keys, paths) change **only** with a Handoff Log note the same day — mid-day, not at the end.
+5. Baseline stays green: run `pytest tests/unit -q` **before starting** and **again before committing**.
+6. Commit message format from **Rules §5** (e.g. `feat(stage-2): understanding agent + DSL plan builder + tests`).
+
+### 4. Handoff contract — Day 3 (Stage 2 Understanding)
+
+- **Inputs you consume:** `runs/<run_id>/metadata/data_profile.json` + `runs/<run_id>/knowledge/business_context.json` + the **20-row PII-redacted** `profile.sample` (never raw cells — golden rule).
+- **Follow the same pattern as Stage 1:**
+  1. Build pure logic + tools (`column_profiler_tool`, `domain_classifier_tool`, `dsl_plan_builder_tool` → validate against `shared/dsl_validator.py`).
+  2. Implement `agents/understanding_agent.py` (`classify_column_roles` → `detect_domain_and_entities` → `build_analysis_plan`).
+  3. Unit tests in `tests/unit/` → suite green.
+  4. Standalone deterministic run + live `--crew` run on a sample CSV/XLSX.
+  5. Append a Handoff Log row + update the snapshot, commit, push.
+
+---
+
 ## 🗓️ Task table
 
 > `Owner` follows strict alternation. Adjust the table if you change the starting owner or the number of tasks.
@@ -81,9 +133,9 @@
 > Update this every evening before pushing.
 
 - **Last finished task:** Day 2 — Stage 1 Ingestion — ✅ done; deterministic + live `--crew` runs verified on CSV & XLSX (largest-sheet fallback, generic mode, Python-authoritative hashes), `102 passed in ~12s`
-- **Last commit:** `1bb2361 feat(contracts): DSL whitelist validator + stages 5-8 schemas + tests` (Day 2 work is uncommitted)
+- **Last commit:** `d977192 feat(stage-1): ingestion agent + crew run + tests` (pushed) — this doc's workflow section is the follow-up
 - **Baseline tests:** 102 passing in `tests/unit/` (94 + 8 ingestion) — `& "C:\Users\Malik\miniconda3\envs\py312_env\python.exe" -m pytest tests/unit -q`
-- **Working tree:** Day 2 changes uncommitted — **commit before Day 3** (msg: `feat(stage-1): ingestion agent + crew run + tests`); `.env` created locally (gitignored, has the OpenRouter key)
+- **Working tree:** only this doc updated (workflow section) — commit + push before Day 3; `.env` is local + gitignored (OpenRouter key)
 - **Open items / decisions:**
   - Day 3 Understanding: consume `data_profile.json` + `business_context.json` + the 20-row PII-redacted `sample` (never raw cells)
   - Day 6 growth executor: default `basis` → `previous_period` when absent
