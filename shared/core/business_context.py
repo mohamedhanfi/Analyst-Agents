@@ -88,7 +88,10 @@ class BusinessContextGatherer:
         box: Dict[str, str] = {}
 
         def worker() -> None:
-            box["value"] = self._input(prompt + " ")
+            try:
+                box["value"] = self._input(prompt + " ")
+            except EOFError:
+                box["value"] = None
 
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
