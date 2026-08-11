@@ -14,6 +14,15 @@ from shared.tools.understanding import (
     dsl_plan_builder_tool,
     domain_classifier_tool,
 )
+from shared.tools.data_quality import (
+    business_rules_checker_tool,
+    deterministic_repair_tool,
+    duplicate_detector_tool,
+    invalid_value_checker_tool,
+    missingness_analyzer_tool,
+    referential_integrity_tool,
+    schema_checker_tool,
+)
 
 __all__ = [
     "file_validator_tool",
@@ -25,4 +34,11 @@ __all__ = [
     "column_profiler_tool",
     "domain_classifier_tool",
     "dsl_plan_builder_tool",
+    "schema_checker_tool",
+    "invalid_value_checker_tool",
+    "business_rules_checker_tool",
+    "missingness_analyzer_tool",
+    "duplicate_detector_tool",
+    "referential_integrity_tool",
+    "deterministic_repair_tool",
 ]

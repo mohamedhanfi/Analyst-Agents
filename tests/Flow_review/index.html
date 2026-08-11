@@ -26,6 +26,9 @@
   button:disabled { background: var(--line); color: var(--muted);
                     cursor: not-allowed; }
   input[type=file] { color: var(--muted); font-size: 12px; max-width: 240px; }
+  select { background: var(--panel2); color: var(--text);
+           border: 1px solid var(--line); border-radius: 8px;
+           padding: 7px 10px; font-size: 12.5px; }
   #badge { border-radius: 999px; padding: 5px 12px; font-size: 12px;
            font-weight: 700; border: 1px solid var(--line);
            color: var(--muted); }
@@ -33,6 +36,7 @@
                    animation: blink 1s infinite; }
   #badge.done { color: var(--green); border-color: var(--green); }
   #badge.failed { color: var(--red); border-color: var(--red); }
+  #badge.historical { color: var(--violet); border-color: var(--violet); }
   @keyframes blink { 50% { opacity: .35; } }
 
   main { padding: 22px; display: flex; flex-direction: column; gap: 20px; }
@@ -42,7 +46,7 @@
   .pipe .arrow { align-self: center; color: var(--muted); font-size: 18px;
                  padding: 0 2px; }
   .stage { background: var(--panel); border: 1px solid var(--line);
-           border-radius: 12px; padding: 10px 12px; min-width: 132px;
+           border-radius: 12px; padding: 10px 12px; min-width: 148px;
            text-align: center; position: relative; }
   .stage .num { position: absolute; top: 6px; left: 8px; font-size: 10px;
                 color: var(--muted); }
@@ -60,8 +64,16 @@
   .stage.passed .dot { background: var(--green); }
   .stage.failed { border-color: var(--red); }
   .stage.failed .dot { background: var(--red); }
+  .stage.needs_repair { border-color: var(--amber); }
+  .stage.needs_repair .dot { background: var(--amber); }
   .stage.skipped .dot { background: var(--amber); }
   .stage .dur { font-size: 10px; color: var(--muted); margin-top: 5px; }
+  .stage .flow { margin-top: 6px; display: flex; flex-wrap: wrap;
+                 gap: 3px; justify-content: center; }
+  .chip { background: var(--panel2); border: 1px solid var(--line);
+          border-radius: 999px; padding: 1px 7px; font-size: 9.5px;
+          color: var(--muted); white-space: nowrap; }
+  .chip b { color: var(--text); font-weight: 700; }
   @keyframes ping { 70% { box-shadow: 0 0 0 10px transparent; }
                     100% { box-shadow: 0 0 0 0 transparent; } }
 
@@ -72,6 +84,25 @@
            border-radius: 12px; padding: 14px 16px; }
   .panel h2 { font-size: 13px; margin: 0 0 10px; text-transform: uppercase;
               letter-spacing: .8px; color: var(--muted); }
+  .panel .headrow { display: flex; align-items: baseline;
+                     justify-content: space-between; flex-wrap: wrap;
+                     gap: 8px; }
+
+  #dataflow { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+              gap: 10px; }
+  .flowcard { background: var(--panel2); border: 1px solid var(--line);
+              border-radius: 10px; padding: 10px 12px; }
+  .flowcard .fname { font-size: 11.5px; font-weight: 700; color: var(--blue);
+                      margin-bottom: 6px; }
+  .flowcard .frow { display: flex; justify-content: space-between;
+                     font-size: 11.5px; padding: 1px 0; }
+  .flowcard .frow .k { color: var(--muted); }
+  .flowcard .frow .v { color: var(--text); font-weight: 600; }
+
+  .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+             font-size: 11px; color: var(--muted); }
+  .filters label { display: flex; align-items: center; gap: 3px; cursor: pointer; }
+  .filters input[type=checkbox] { accent-color: var(--blue); }
 
   #timeline { max-height: 420px; overflow-y: auto; font-size: 12.5px;
               display: flex; flex-direction: column; gap: 4px; }
@@ -90,13 +121,24 @@
   .ev .msg { color: var(--text); word-break: break-word; }
 
   #artifacts { display: flex; flex-direction: column; gap: 8px;
-               max-height: 420px; overflow-y: auto; }
+               max-height: 65vh; overflow-y: auto; }
   details { background: var(--panel2); border-radius: 8px; overflow: hidden; }
   summary { cursor: pointer; padding: 8px 12px; font-size: 12.5px;
             font-weight: 700; color: var(--blue); }
-  summary .meta { color: var(--muted); font-weight: 400; float: right; }
-  pre { margin: 0; padding: 10px 12px; background: #0a1120; font-size: 11px;
-        overflow-x: auto; color: #a5f3fc; }
+  summary .meta { color: var(--muted); font-weight: 400; float: right;
+                  margin-left: 8px; }
+  summary .tools { float: right; display: flex; gap: 4px; margin-right: 8px; }
+  summary .tools button { background: none; border: 1px solid var(--line);
+    color: var(--muted); border-radius: 5px; font-size: 10.5px;
+    padding: 1px 7px; cursor: pointer; }
+  summary .tools button:hover { color: var(--text); border-color: var(--blue); }
+  pre { margin: 0; padding: 10px 12px; background: #0a1120; font-size: 11.5px;
+        overflow: auto; color: #cbd5e1; max-height: 340px; }
+  pre.wrap { white-space: pre-wrap; word-break: break-word; }
+  .tok-key { color: #7dd3fc; }
+  .tok-str { color: #86efac; }
+  .tok-num { color: #fde047; }
+  .tok-kw { color: #f0abfc; }
   .hint { color: var(--muted); font-size: 12px; }
   .empty { color: var(--muted); font-size: 12.5px; padding: 10px 4px; }
 </style>
@@ -108,6 +150,9 @@
     <div class="sub">watch the pipeline move: stage by stage, agent by agent</div>
   </div>
   <div class="spacer"></div>
+  <select id="runSelect" title="Browse past runs">
+    <option value="">— Live —</option>
+  </select>
   <input type="file" id="file" accept=".csv,.xlsx">
   <button id="start">Run pipeline</button>
   <span id="badge">idle</span>
@@ -116,14 +161,33 @@
 <main>
   <div class="pipe" id="pipe"></div>
 
+  <div class="panel">
+    <div class="headrow">
+      <h2 style="margin:0">Data flow — what changed at each stage</h2>
+      <span class="hint">shape/quality metrics pulled from each stage's own output</span>
+    </div>
+    <div id="dataflow"><div class="empty">Nothing to show yet — run the
+      pipeline or pick a past run above.</div></div>
+  </div>
+
   <div class="cols">
     <div class="panel">
-      <h2>Live event trail <span class="hint">(run.jsonl — every stage writes
-        to the same audit log)</span></h2>
+      <div class="headrow">
+        <h2 style="margin:0">Live event trail <span class="hint">(run.jsonl)</span></h2>
+        <div class="filters" id="filters">
+          <label><input type="checkbox" value="stage_start" checked>stage</label>
+          <label><input type="checkbox" value="tool_call" checked>tool</label>
+          <label><input type="checkbox" value="llm_call" checked>llm</label>
+          <label><input type="checkbox" value="info" checked>info</label>
+          <label><input type="checkbox" value="fallback" checked>fallback</label>
+          <label><input type="checkbox" value="error" checked>error</label>
+          <label><input type="checkbox" id="autoscroll" checked>autoscroll</label>
+        </div>
+      </div>
       <div id="timeline"><div class="empty">Waiting for a run…</div></div>
     </div>
     <div class="panel">
-      <h2>Artifacts — data moving between stages</h2>
+      <h2>Artifacts — raw output per stage</h2>
       <div id="artifacts"><div class="empty">Artifacts appear here as each
         stage finishes.</div></div>
     </div>
@@ -134,9 +198,16 @@
 const $ = (id) => document.getElementById(id);
 const EV_KINDS = new Set(["stage_start","stage_end","tool_call","llm_call",
                           "info","fallback","error"]);
+const FINISHED = new Set(["passed","failed","needs_repair"]);
 
 let seenArtifacts = new Set();
 let clientOffset = 0;
+let allEvents = [];               // full event history for the run in view
+let stageFlow = {};               // stage id -> [[label,value], ...] chips
+let viewingRunId = "";            // "" = live, else a past run_id
+let statusDur = {};
+
+// -------------------------------------------------------------- pipeline
 
 function renderPipeline(stages, status) {
   const pipe = $("pipe");
@@ -148,50 +219,84 @@ function renderPipeline(stages, status) {
       pipe.appendChild(a);
     }
     const el = document.createElement("div");
-    el.className = "stage " + (s.implemented ? status[s.id] : "pending");
+    const st = s.implemented ? status[s.id] : "pending";
+    el.className = "stage " + st;
+    const chips = (stageFlow[s.id] || []).slice(0, 3).map(([k, v]) =>
+      '<span class="chip">' + escapeHtml(k) + ': <b>' + escapeHtml(String(v)) +
+      '</b></span>').join("");
     el.innerHTML =
       '<div class="num">' + s.num + '</div>' +
-      '<div class="name">' + s.name + '</div>' +
+      '<div class="name">' + escapeHtml(s.name) + '</div>' +
       (s.implemented ? "" : '<div class="task">Task ' + s.task + ' — planned</div>') +
       '<div class="dot"></div>' +
-      (status[s.id] === "passed" && statusDur[s.id]
-        ? '<div class="dur">' + statusDur[s.id].toFixed(1) + "s</div>" : "");
+      (FINISHED.has(st) && statusDur[s.id] != null
+        ? '<div class="dur">' + statusDur[s.id].toFixed(1) + "s</div>" : "") +
+      (chips ? '<div class="flow">' + chips + '</div>' : "");
     pipe.appendChild(el);
   });
 }
 
-const statusDur = {};
+// -------------------------------------------------------------- timeline
 
-function renderEvents(events) {
+function activeFilters() {
+  const boxes = document.querySelectorAll("#filters input[type=checkbox]");
+  const set = new Set();
+  boxes.forEach(b => { if (b.id !== "autoscroll" && b.checked) set.add(b.value); });
+  return set;
+}
+
+function renderTimeline() {
   const tl = $("timeline");
-  if (events.length && tl.querySelector(".empty")) tl.innerHTML = "";
-  for (const e of events) {
+  const filters = activeFilters();
+  const visible = allEvents.filter(e => {
+    const kind = EV_KINDS.has(e.kind) ? e.kind : "info";
+    const bucket = (kind === "stage_end") ? "stage_start" : kind; // share the "stage" checkbox
+    return filters.has(bucket);
+  });
+  tl.innerHTML = "";
+  if (!visible.length) {
+    tl.innerHTML = '<div class="empty">' +
+      (allEvents.length ? "No events match the current filters."
+                        : "Waiting for a run…") + '</div>';
+    return;
+  }
+  for (const e of visible) {
     const row = document.createElement("div");
     const kind = EV_KINDS.has(e.kind) ? e.kind : "info";
     row.className = "ev " + kind;
-    const tag = kind === "stage_start" ? "▶ " + e.stage
-              : kind === "stage_end" ? "■ " + e.stage + " " + (e.status || "")
-              : e.tool || e.kind;
+    const tag = kind === "stage_start" ? "▶ " + (e.stage || "")
+              : kind === "stage_end" ? "■ " + (e.stage || "") + " " + (e.status || "")
+              : (e.tool || e.kind || "");
     const msg = e.message || "";
     const extra = (e.duration_s != null)
-      ? "  [" + e.duration_s.toFixed(2) + "s]" : "";
-    row.innerHTML = '<span class="t">' + (e.ts || "") + '</span>' +
-      '<span class="tag">' + tag + '</span>' +
-      '<span class="msg">' + msg + extra + '</span>';
+      ? "  [" + Number(e.duration_s).toFixed(2) + "s]" : "";
+    // escapeHtml on every user/agent-controlled field — event content can
+    // ultimately trace back to untrusted cell data, never trust it raw.
+    row.innerHTML = '<span class="t">' + escapeHtml(e.ts || "") + '</span>' +
+      '<span class="tag">' + escapeHtml(tag) + '</span>' +
+      '<span class="msg">' + escapeHtml(msg + extra) + '</span>';
     tl.appendChild(row);
   }
-  tl.scrollTop = tl.scrollHeight;
+  if ($("autoscroll").checked) tl.scrollTop = tl.scrollHeight;
 }
+
+document.querySelectorAll("#filters input").forEach(el =>
+  el.addEventListener("change", () => { if (el.id !== "autoscroll") renderTimeline(); }));
+
+// -------------------------------------------------------------- artifacts
 
 const ARTIFACTS = {
   ingestion: ["data/extracted/", "metadata/data_profile.json",
               "knowledge/business_context.json"],
   understanding: ["metadata/dataset_understanding.json",
                   "metadata/analysis_plan.json"],
+  data_quality: ["metadata/data_quality_report.json",
+                 "metadata/repair_log.json"],
 };
 
 function renderArtifacts(events) {
-  const finished = events.filter(e => e.kind === "stage_end" && e.status === "passed");
+  const finished = events.filter(e => e.kind === "stage_end"
+    && (e.status === "passed" || e.status === "needs_repair"));
   for (const ev of finished) {
     const rels = ARTIFACTS[ev.stage] || [];
     for (const rel of rels) renderArtifact(ev.stage, rel);
@@ -199,49 +304,166 @@ function renderArtifacts(events) {
 }
 
 async function renderArtifact(stage, rel) {
-  const key = stage + ":" + rel;
+  const key = viewingRunId + ":" + stage + ":" + rel;
   if (seenArtifacts.has(key)) return;
   seenArtifacts.add(key);
   const box = $("artifacts");
   box.querySelector(".empty")?.remove();
-  const res = await fetch("/api/artifact?rel=" + encodeURIComponent(rel));
+  const q = "rel=" + encodeURIComponent(rel) +
+    (viewingRunId ? "&run_id=" + encodeURIComponent(viewingRunId) : "");
+  const res = await fetch("/api/artifact?" + q);
   const data = await res.json();
   if (data.error) return;
   const det = document.createElement("details");
   det.open = true;
   const label = rel.split("/").pop();
-  let body = "";
+  const tools = '<span class="tools">' +
+    '<button class="copy" title="copy raw content">copy</button>' +
+    '<button class="wrap" title="wrap long lines">wrap</button></span>';
+  const meta = '<span class="meta"></span>';
   if (data.content !== undefined) {
-    body = JSON.stringify(data.content, null, 2);
-    det.innerHTML = '<summary>' + stage + " / " + label +
-      '<span class="meta">' + (body.length / 1024).toFixed(1) + " KB</span></summary>" +
-      "<pre>" + escapeHtml(body) + "</pre>";
+    const body = JSON.stringify(data.content, null, 2);
+    const raw = body;
+    det.innerHTML = '<summary>' + escapeHtml(stage + " / " + label) +
+      meta + tools + "</summary>" +
+      "<pre>" + highlightJson(escapeHtml(body)) + "</pre>";
+    det.querySelector(".meta").textContent =
+      (body.length / 1024).toFixed(1) + " KB";
+    wirePanelTools(det, raw);
+    renderDataFlow(stage, label, data.content);
   } else if (data.preview !== undefined) {
-    det.innerHTML = '<summary>' + stage + " / " + label +
-      '<span class="meta">first rows</span></summary>' +
-      "<pre>" + escapeHtml(data.preview.join("\n")) + "</pre>";
+    const raw = data.preview.join("\n");
+    det.innerHTML = '<summary>' + escapeHtml(stage + " / " + label) +
+      meta + tools + '<span class="tag">first rows</span></summary>' +
+      "<pre>" + escapeHtml(raw) + "</pre>";
+    wirePanelTools(det, raw);
   } else if (data.dir !== undefined) {
-    det.innerHTML = '<summary>' + stage + " / " + label +
-      '<span class="meta">' + data.files.length + " file(s)</span></summary>" +
-      "<pre>" + escapeHtml(data.files.join("\n")) + "</pre>";
+    const raw = data.files.join("\n");
+    det.innerHTML = '<summary>' + escapeHtml(stage + " / " + label) +
+      meta + tools + '<span class="tag">' + data.files.length +
+      " file(s)</span></summary>" +
+      "<pre>" + escapeHtml(raw) + "</pre>";
+    det.querySelector(".meta").textContent =
+      data.files.length + " file(s)";
+    wirePanelTools(det, raw);
   }
   box.prepend(det);
 }
 
-function escapeHtml(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function wirePanelTools(det, raw) {
+  const pre = det.querySelector("pre");
+  const copy = det.querySelector(".copy");
+  const wrap = det.querySelector(".wrap");
+  if (copy) copy.addEventListener("click", () => {
+    navigator.clipboard.writeText(raw)
+      .then(() => { copy.textContent = "copied"; })
+      .catch(() => { copy.textContent = "failed"; });
+    setTimeout(() => { copy.textContent = "copy"; }, 1200);
+  });
+  if (wrap) wrap.addEventListener("click", () => {
+    pre.classList.toggle("wrap");
+    wrap.textContent = pre.classList.contains("wrap") ? "unwrap"
+                                                      : "wrap";
+  });
 }
+
+function highlightJson(escaped) {
+  return escaped.replace(
+    /("[^"]*?")(\s*:)?|(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(\btrue\b|\bfalse\b|\bnull\b)/g,
+    (m, str, colon, num, kw) => {
+      if (num !== undefined) return '<span class="tok-num">' + num + "</span>";
+      if (kw !== undefined) return '<span class="tok-kw">' + kw + "</span>";
+      return '<span class="tok-' + (colon ? "key" : "str") + '">' + str +
+        "</span>" + (colon || "");
+    });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// -------------------------------------------------------------- data flow
+
+// Pulls a compact set of "what changed" metrics out of each known artifact,
+// per the schemas documented for each stage — this is what actually answers
+// "how did the data move from one stage to the next" without opening raw JSON.
+function summarize(label, c) {
+  if (!c || typeof c !== "object") return null;
+  if (label === "data_profile.json") return [
+    ["rows", c.row_count], ["columns", c.column_count],
+    ["duplicate rows", c.duplicate_rows],
+    ["missing cols", Object.keys(c.missing_values || {}).length],
+    ["PII cols", (c.pii_columns || []).length],
+    ["status", c.validation_status],
+  ];
+  if (label === "dataset_understanding.json") return [
+    ["domain", c.detected_domain],
+    ["confidence", c.domain_confidence != null ? (c.domain_confidence * 100).toFixed(0) + "%" : undefined],
+    ["measures", (c.measures || []).length],
+    ["dimensions", (c.dimensions || []).length],
+    ["temporal cols", (c.temporal_columns || []).length],
+  ];
+  if (label === "analysis_plan.json") return [
+    ["candidate KPIs", (c.candidate_kpis || []).length],
+    ["stat tests", (c.statistical_tests || []).length],
+  ];
+  if (label === "data_quality_report.json") return [
+    ["status", c.status],
+    ["duplicates", c.duplicates],
+    ["invalid cols", Object.keys(c.invalid || {}).length],
+    ["missing rate", c.missingness && c.missingness.rate != null
+      ? (c.missingness.rate * 100).toFixed(1) + "%" : undefined],
+    ["issues", (c.issues || []).length],
+  ];
+  return null;
+}
+
+function renderDataFlow(stage, label, content) {
+  const rows = summarize(label, content);
+  if (!rows) return;
+  const clean = rows.filter(([, v]) => v !== undefined && v !== null);
+  if (!clean.length) return;
+  stageFlow[stage] = clean;
+
+  const box = $("dataflow");
+  box.querySelector(".empty")?.remove();
+  let card = box.querySelector('[data-stage="' + stage + '"]');
+  if (!card) {
+    card = document.createElement("div");
+    card.className = "flowcard";
+    card.dataset.stage = stage;
+    box.appendChild(card);
+  }
+  card.innerHTML = '<div class="fname">' + escapeHtml(stage) + " · " +
+    escapeHtml(label) + "</div>" +
+    clean.map(([k, v]) => '<div class="frow"><span class="k">' +
+      escapeHtml(k) + '</span><span class="v">' + escapeHtml(String(v)) +
+      "</span></div>").join("");
+}
+
+// -------------------------------------------------------------- run control
 
 async function startRun() {
   const file = $("file").files[0];
   if (!file) { alert("Pick a CSV or XLSX file first."); return; }
   $("start").disabled = true;
   $("badge").className = "running"; $("badge").textContent = "starting";
-  seenArtifacts.clear();
+  resetView();
   const res = await fetch("/api/start?name=" + encodeURIComponent(file.name),
                           { method: "POST", body: file });
   const data = await res.json();
   if (!data.ok) { alert(data.error || "start failed"); resetHeader(); }
+}
+
+function resetView() {
+  seenArtifacts.clear();
+  allEvents = [];
+  stageFlow = {};
+  clientOffset = 0;
+  $("artifacts").innerHTML = '<div class="empty">Artifacts appear here as ' +
+    'each stage finishes.</div>';
+  $("dataflow").innerHTML = '<div class="empty">Nothing to show yet — run ' +
+    'the pipeline or pick a past run above.</div>';
 }
 
 function resetHeader() {
@@ -249,14 +471,54 @@ function resetHeader() {
   $("badge").className = ""; $("badge").textContent = "idle";
 }
 
+// -------------------------------------------------------------- run history
+
+async function refreshRunList() {
+  try {
+    const { runs } = await (await fetch("/api/runs")).json();
+    const sel = $("runSelect");
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— Live —</option>';
+    for (const r of runs) {
+      const opt = document.createElement("option");
+      opt.value = r.run_id;
+      const when = new Date(r.modified * 1000).toLocaleString();
+      const flag = r.live ? " (running)" : r.error ? " (failed)" : "";
+      opt.textContent = r.run_id + " — " + r.stages_passed + " passed" + flag +
+        " — " + when;
+      sel.appendChild(opt);
+    }
+    sel.value = current;
+  } catch (_) { /* server restarting */ }
+}
+
+$("runSelect").addEventListener("change", () => {
+  viewingRunId = $("runSelect").value;
+  resetView();
+  poll();
+});
+
+// -------------------------------------------------------------- polling
+
 async function poll() {
   try {
-    const st = await (await fetch("/api/state?offset=" + clientOffset)).json();
+    const q = "offset=" + clientOffset +
+      (viewingRunId ? "&run_id=" + encodeURIComponent(viewingRunId) : "");
+    const st = await (await fetch("/api/state?" + q)).json();
     if (typeof st.offset === "number") clientOffset = st.offset;
-    renderPipeline(st.stages, st.stage_status, st.stage_duration);
     Object.assign(statusDur, st.stage_duration || {});
-    renderEvents(st.events || []);
+    if (st.events && st.events.length) allEvents.push(...st.events);
+
+    renderPipeline(st.stages || [], st.stage_status || {});
+    renderTimeline();
     renderArtifacts(st.events || []);
+
+    if (st.historical) {
+      $("badge").className = "historical";
+      $("badge").textContent = "viewing past run: " + st.run_id;
+      $("start").disabled = true;
+      return;
+    }
     if (st.error) {
       $("badge").className = "failed"; $("badge").textContent = "failed";
       $("start").disabled = false;
@@ -264,21 +526,25 @@ async function poll() {
       $("badge").className = "running"; $("badge").textContent = "running";
       $("start").disabled = true;
     } else if (st.run_id) {
-      const all = Object.values(st.stage_status);
+      const all = Object.values(st.stage_status || {});
       const done = all.filter(s => s === "passed").length;
       const failed = all.filter(s => s === "failed").length;
       $("badge").className = failed ? "failed" : "done";
       $("badge").textContent = failed ? "finished — failed"
                                       : "finished — " + done + " stage(s) passed";
       $("start").disabled = false;
+    } else {
+      resetHeader();
     }
   } catch (_) { /* server restarting */ }
 }
 
-$("start").addEventListener("click", startRun);
 renderPipeline([{num:1,name:"…",implemented:false},
                 {num:2,name:"…",implemented:false}],
                {ingestion:"pending",understanding:"pending"});
+$("start").addEventListener("click", startRun);
+refreshRunList();
+setInterval(refreshRunList, 4000);
 setInterval(poll, 700);
 poll();
 </script>

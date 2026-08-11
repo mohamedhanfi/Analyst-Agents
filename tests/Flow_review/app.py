@@ -3,7 +3,8 @@
 Shows every stage, tool call and artifact IN REAL TIME as the pipeline
 runs, and the data moving from one stage/agent to the next. Pure stdlib
 (no Flask) — the browser polls a tiny JSON API while a background thread
-drives the deterministic pipeline.
+drives the deterministic pipeline. Past runs (in `runs/`) can also be
+re-opened read-only from the "Run" dropdown once the live run finishes.
 
     python tests/Flow_review/app.py            # opens http://127.0.0.1:8765
     python tests/Flow_review/app.py --demo     # auto-start a sample run
@@ -11,7 +12,7 @@ drives the deterministic pipeline.
 If the port is taken (e.g. another local service), the app scans the next
 10 ports and prints the URL it actually bound to.
 
-Stage 3+ are not implemented yet — they render as dimmed "Task N" cards
+Stage 4+ are not implemented yet — they render as dimmed "Task N" cards
 and light up automatically once their agents land (they all write the same
 run.jsonl audit trail via RunLogger, so this viewer never changes).
 """
@@ -28,6 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 from urllib.parse import parse_qs, urlparse
 
+from agents.data_quality import run_data_quality
 from agents.ingestion_agent import run_ingestion
 from agents.understanding_agent import run_understanding
 from shared.utils import load_config
@@ -43,7 +45,7 @@ STAGES: List[Dict[str, Any]] = [
     {"id": "understanding", "num": 2, "name": "Understanding",
      "implemented": True},
     {"id": "data_quality", "num": 3, "name": "Data Quality",
-     "implemented": False, "task": 4},
+     "implemented": True},
     {"id": "cleaning", "num": 4, "name": "Cleaning",
      "implemented": False, "task": 5},
     {"id": "analysis", "num": 5, "name": "Analysis",
@@ -62,6 +64,8 @@ ARTIFACTS: Dict[str, List[str]] = {
                   "knowledge/business_context.json"],
     "understanding": ["metadata/dataset_understanding.json",
                       "metadata/analysis_plan.json"],
+    "data_quality": ["metadata/data_quality_report.json",
+                     "metadata/repair_log.json"],
 }
 
 _ANSWERS = iter(["Track revenue growth", "sales",
@@ -93,13 +97,14 @@ class State:
         self.events: List[Dict[str, Any]] = []
 
     def reset(self, run_id: str, run_dir: Path) -> None:
-        self.busy = True
-        self.run_id = run_id
-        self.run_dir = run_dir
-        self.stage_status = {s["id"]: "pending" for s in STAGES}
-        self.stage_duration = {}
-        self.error = None
-        self.events = []
+        with self.lock:
+            self.busy = True
+            self.run_id = run_id
+            self.run_dir = run_dir
+            self.stage_status = {s["id"]: "pending" for s in STAGES}
+            self.stage_duration = {}
+            self.error = None
+            self.events = []
 
     def set_stage(self, stage: str, status: str,
                   duration: float | None = None) -> None:
@@ -107,6 +112,14 @@ class State:
             self.stage_status[stage] = status
             if duration is not None:
                 self.stage_duration[stage] = duration
+
+    def set_busy(self, busy: bool) -> None:
+        with self.lock:
+            self.busy = busy
+
+    def set_error(self, msg: str | None) -> None:
+        with self.lock:
+            self.error = msg
 
     def snapshot(self) -> Dict[str, Any]:
         with self.lock:
@@ -131,8 +144,8 @@ def _run_pipeline(file_path: Path) -> None:
         RUNS_DIR.mkdir(parents=True, exist_ok=True)
         (RUNS_DIR / "last_error.log").write_text(
             traceback.format_exc(), encoding="utf-8")
-        STATE.error = str(exc)
-        STATE.busy = False
+        STATE.set_error(str(exc))
+        STATE.set_busy(False)
 
 
 def _run_pipeline_impl(file_path: Path) -> None:
@@ -151,19 +164,25 @@ def _run_pipeline_impl(file_path: Path) -> None:
             STATE.set_stage(stage_id, status, time.monotonic() - t0)
             return summary
         except Exception as exc:  # noqa: BLE001
-            STATE.error = f"{stage_id}: {exc}"
+            STATE.set_error(f"{stage_id}: {exc}")
             STATE.set_stage(stage_id, "failed", time.monotonic() - t0)
             return {"status": "failed", "error": str(exc)}
 
     s1 = _stage("ingestion",
                 lambda: run_ingestion(str(file_path), run_dir=run_dir,
                                       cfg=cfg, answer_provider=_auto_answer))
+    s2: Dict[str, Any] = {}
     if s1.get("status") == "passed":
-        _stage("understanding",
-               lambda: run_understanding(run_dir, cfg=cfg))
+        s2 = _stage("understanding",
+                    lambda: run_understanding(run_dir, cfg=cfg))
     else:
         STATE.set_stage("understanding", "skipped")
-    STATE.busy = False
+    if s2.get("status") == "passed":
+        _stage("data_quality",
+               lambda: run_data_quality(run_dir, cfg=cfg))
+    else:
+        STATE.set_stage("data_quality", "skipped")
+    STATE.set_busy(False)
 
 
 def _start_pipeline(file_name: str, payload: bytes) -> Dict[str, Any]:
@@ -173,8 +192,6 @@ def _start_pipeline(file_name: str, payload: bytes) -> Dict[str, Any]:
     safe = Path(file_name).name
     dest = UPLOADS_DIR / f"{time.strftime('%Y%m%d_%H%M%S')}__{safe}"
     dest.write_bytes(payload)
-    if STATE.run_dir:
-        pass  # keep runs isolated; each start makes a fresh run dir
     thread = threading.Thread(target=_run_pipeline, args=(dest,),
                               daemon=True)
     thread.start()
@@ -216,6 +233,67 @@ def _read_log_events(run_dir: Path, offset: int) -> List[Dict[str, Any]]:
     return [json.loads(line) for line in lines[offset:]]
 
 
+def _resolve_run_dir(run_id: str | None) -> Path | None:
+    """Resolve a run_id to its directory, guarding against path traversal.
+
+    Falls back to the currently live run when run_id is omitted.
+    """
+    if not run_id:
+        return STATE.run_dir
+    candidate = (RUNS_DIR / run_id).resolve()
+    try:
+        candidate.relative_to(RUNS_DIR.resolve())
+    except ValueError:
+        return None
+    return candidate if candidate.is_dir() else None
+
+
+def _reconstruct_status(run_dir: Path) -> Dict[str, Any]:
+    """Rebuild stage_status/stage_duration/error for a run purely from its
+    run.jsonl — used to view a past run that isn't in live STATE anymore."""
+    stage_status = {s["id"]: "pending" for s in STAGES}
+    stage_duration: Dict[str, float] = {}
+    error: str | None = None
+    for event in _read_log_events(run_dir, 0):
+        if event.get("kind") == "stage_start":
+            stage_status.setdefault(event.get("stage", ""), "running")
+            stage_status[event.get("stage", "")] = "running"
+        elif event.get("kind") == "stage_end":
+            stage = event.get("stage", "")
+            status = event.get("status", "failed")
+            stage_status[stage] = status
+            if event.get("duration_s") is not None:
+                stage_duration[stage] = event["duration_s"]
+            if status == "failed":
+                error = event.get("message") or f"{stage}: failed"
+        elif event.get("kind") == "error" and error is None:
+            error = event.get("message")
+    return {"stage_status": stage_status, "stage_duration": stage_duration,
+            "error": error}
+
+
+def _list_runs() -> List[Dict[str, Any]]:
+    if not RUNS_DIR.exists():
+        return []
+    runs = []
+    for d in RUNS_DIR.iterdir():
+        if not d.is_dir():
+            continue
+        info = _reconstruct_status(d)
+        live = (STATE.run_id == d.name and STATE.busy)
+        finished = sum(1 for v in info["stage_status"].values()
+                       if v == "passed")
+        runs.append({
+            "run_id": d.name,
+            "modified": d.stat().st_mtime,
+            "live": live,
+            "error": info["error"],
+            "stages_passed": finished,
+        })
+    runs.sort(key=lambda r: r["modified"], reverse=True)
+    return runs
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "FlowReview/0.1"
 
@@ -236,14 +314,35 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/":
             html = (APP_DIR / "index.html").read_text(encoding="utf-8")
             return self._send(200, html.encode("utf-8"), "text/html")
+        if parsed.path == "/api/runs":
+            return self._json({"runs": _list_runs()})
         if parsed.path == "/api/state":
-            state = STATE.snapshot()
+            query = parse_qs(parsed.query)
+            run_id = (query.get("run_id") or [None])[0]
             try:
-                offset = int((parse_qs(parsed.query).get("offset") or [0])[0])
+                offset = int((query.get("offset") or [0])[0])
             except ValueError:
                 offset = 0
-            if STATE.run_dir:
-                events = _read_log_events(STATE.run_dir, offset)
+
+            viewing_live = not run_id or run_id == STATE.run_id
+            if viewing_live:
+                state = STATE.snapshot()
+                run_dir = STATE.run_dir
+            else:
+                run_dir = _resolve_run_dir(run_id)
+                if run_dir is None:
+                    return self._json({"error": "unknown run_id"}, 404)
+                info = _reconstruct_status(run_dir)
+                state = {
+                    "busy": False, "run_id": run_id, "historical": True,
+                    "stage_status": info["stage_status"],
+                    "stage_duration": info["stage_duration"],
+                    "error": info["error"], "stages": STAGES,
+                }
+                offset = 0  # historical runs are static — always send all events
+
+            if run_dir:
+                events = _read_log_events(run_dir, offset)
                 state["events"] = events
                 state["offset"] = offset + len(events)
             else:
@@ -253,10 +352,12 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/artifact":
             query = parse_qs(parsed.query)
             rel = (query.get("rel") or [""])[0]
-            if not STATE.run_dir or not rel:
-                return self._json({"error": "missing rel"}, 400)
-            target = (STATE.run_dir / rel).resolve()
-            if not target.is_relative_to(STATE.run_dir.resolve()):
+            run_id = (query.get("run_id") or [None])[0]
+            run_dir = _resolve_run_dir(run_id)
+            if not run_dir or not rel:
+                return self._json({"error": "missing rel or unknown run"}, 400)
+            target = (run_dir / rel).resolve()
+            if not target.is_relative_to(run_dir.resolve()):
                 return self._json({"error": "outside run dir"}, 400)
             if target.is_dir():
                 files = sorted(p.name for p in target.iterdir())
