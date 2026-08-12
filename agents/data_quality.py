@@ -31,16 +31,6 @@ from shared.utils import init_run_layout, load_config
 
 STAGE = "data_quality"
 
-CHECKS = [
-    "schema_checker_tool",
-    "invalid_value_checker_tool",
-    "business_rules_checker_tool",
-    "missingness_analyzer_tool",
-    "duplicate_detector_tool",
-    "referential_integrity_tool",
-    "deterministic_repair_tool",
-]
-
 
 def run_data_quality(run_dir: str | Path,
                      cfg: Dict[str, Any] | None = None,

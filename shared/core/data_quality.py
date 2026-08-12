@@ -273,12 +273,24 @@ def analyze_missingness(understanding: DatasetUnderstanding,
     }
 
 
+def _jsonable(value: Any) -> Any:
+    """numpy scalars -> python scalars so json.dumps never chokes."""
+    if hasattr(value, "item"):
+        return value.item()
+    if isinstance(value, dict):
+        return {key: _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    return value
+
+
 def detect_duplicates(df: pd.DataFrame
                       ) -> Tuple[int, List[Dict[str, Any]]]:
-    """Exact duplicate rows: count + first 5 examples."""
+    """Exact duplicate rows: count + first 5 examples (JSON-safe dicts)."""
     mask = df.duplicated()
     count = int(mask.sum())
-    examples = [row for _, row in df[mask].head(5).iterrows()]
+    examples = [_jsonable(row.to_dict())
+                for _, row in df[mask].head(5).iterrows()]
     return count, examples
 
 

@@ -1,4 +1,4 @@
-"""CrewAI @tool wrappers — stage 3 Data Quality tools.
+﻿"""CrewAI @tool wrappers — stage 3 Data Quality tools.
 
 Deterministic gate tools (§2.3): they never reach an LLM inside a crew —
 the stage is engine-only. The wrappers keep the same @tool contract so
@@ -31,13 +31,24 @@ from shared.schemas import (
 )
 
 
-def _load(profile_json: str, understanding_json: str,
-          context_json: str) -> tuple[DataProfile, DatasetUnderstanding,
-                                      BusinessContext]:
-    profile = DataProfile.model_validate(json.loads(profile_json))
-    understanding = DatasetUnderstanding.model_validate(
-        json.loads(understanding_json))
-    context = BusinessContext.model_validate(json.loads(context_json))
+def _load(profile_json: str | None = None,
+          understanding_json: str | None = None,
+          context_json: str | None = None
+          ) -> tuple[DataProfile, DatasetUnderstanding, BusinessContext]:
+    """Parse the JSON inputs a tool actually needs; unused inputs get
+    minimal-but-valid defaults so a partial call never crashes."""
+    def _parse(model, raw, defaults: dict):
+        if raw and raw.strip() not in ("", "{}"):
+            return model.model_validate(json.loads(raw))
+        return model(**defaults)
+
+    profile = _parse(DataProfile, profile_json, {
+        "file_name": "", "file_hash": "", "row_count": 0,
+        "column_count": 0, "columns": [], "column_types": {}})
+    understanding = _parse(DatasetUnderstanding, understanding_json, {
+        "detected_domain": "", "domain_confidence": 0.0})
+    context = _parse(BusinessContext, context_json, {
+        "file_name": "", "generic_mode": True})
     return profile, understanding, context
 
 
@@ -54,7 +65,7 @@ def schema_checker_tool(profile_json: str, understanding_json: str) -> str:
     understanding_json: metadata/dataset_understanding.json content.
     Returns JSON issues list (severity/category/column/detail).
     """
-    profile, understanding, _ = _load(profile_json, understanding_json, "{}")
+    profile, understanding, _ = _load(profile_json, understanding_json)
     issues = check_schema(understanding, profile)
     return json.dumps([i.to_dict() for i in issues], ensure_ascii=False,
                       indent=2)
@@ -70,7 +81,7 @@ def invalid_value_checker_tool(understanding_json: str,
     Returns JSON issues (negative/over_100_percent/out_of_range/
     impossible/future_dates).
     """
-    _, understanding, _ = _load("{}", understanding_json, "{}")
+    _, understanding, _ = _load(understanding_json=understanding_json)
     issues = check_invalid_values(understanding, _load_df(extracted_csv))
     return json.dumps([i.to_dict() for i in issues], ensure_ascii=False,
                       indent=2)
@@ -100,7 +111,7 @@ def missingness_analyzer_tool(understanding_json: str,
     extracted_csv: path of the extracted dataset CSV.
     Returns {"rate", "pattern", "assessment", "by_column"}.
     """
-    _, understanding, _ = _load("{}", understanding_json, "{}")
+    _, understanding, _ = _load(understanding_json=understanding_json)
     result = analyze_missingness(understanding, _load_df(extracted_csv))
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -126,7 +137,7 @@ def referential_integrity_tool(understanding_json: str,
     extracted_csv: path of the extracted dataset CSV.
     Returns JSON issues.
     """
-    _, understanding, _ = _load("{}", understanding_json, "{}")
+    _, understanding, _ = _load(understanding_json=understanding_json)
     issues = check_referential_integrity(understanding,
                                          _load_df(extracted_csv))
     return json.dumps([i.to_dict() for i in issues], ensure_ascii=False,
@@ -144,7 +155,7 @@ def deterministic_repair_tool(understanding_json: str,
     repair_log: {"repair_applied", "duplicates_removed",
     "impossible_rows_dropped", "type_casts", "coerced_to_null"}.
     """
-    _, understanding, _ = _load("{}", understanding_json, "{}")
+    _, understanding, _ = _load(understanding_json=understanding_json)
     _, repair_log = deterministic_repair(understanding,
                                          _load_df(extracted_csv))
     return json.dumps(repair_log, ensure_ascii=False, indent=2)
