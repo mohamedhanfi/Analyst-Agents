@@ -23,6 +23,15 @@ from shared.tools.data_quality import (
     referential_integrity_tool,
     schema_checker_tool,
 )
+from shared.tools.cleaning import (
+    cleaning_strategy_tool,
+    dq_recheck_tool,
+    dedup_tool,
+    fillna_tool,
+    flag_column_tool,
+    iqr_outlier_tool,
+    type_caster_tool,
+)
 
 __all__ = [
     "file_validator_tool",
@@ -41,4 +50,11 @@ __all__ = [
     "duplicate_detector_tool",
     "referential_integrity_tool",
     "deterministic_repair_tool",
+    "cleaning_strategy_tool",
+    "fillna_tool",
+    "flag_column_tool",
+    "type_caster_tool",
+    "dedup_tool",
+    "iqr_outlier_tool",
+    "dq_recheck_tool",
 ]
