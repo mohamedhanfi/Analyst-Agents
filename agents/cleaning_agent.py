@@ -84,11 +84,10 @@ def build_cleaning_agent(cfg: Dict[str, Any]) -> Agent:
     )
 
 
-def build_cleaning_tasks(agent: Agent, run_dir: str,
+def build_cleaning_tasks(agent: Agent, run_dir: str | Path,
                          cfg: Dict[str, Any]) -> List[Task]:
-    run_dir = str(run_dir)
-    understanding = _load_understanding(run_dir)
-    dq_report = _load_dq_report(run_dir)
+    understanding = _load_understanding(Path(run_dir))
+    dq_report = _load_dq_report(Path(run_dir))
     understanding_json = understanding.model_dump_json()
     dq_json = dq_report.model_dump_json()
 
