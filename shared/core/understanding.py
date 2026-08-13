@@ -11,6 +11,7 @@ does not comply — the plan is whitelist-only by construction.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Union
 
@@ -59,20 +60,51 @@ def _is_temporal(dtype: str) -> bool:
     return "datetime" in dtype or "date" in dtype
 
 
-def infer_role(dtype: str, nunique: int, row_count: int) -> tuple[ColumnRole, List[ColumnRole]]:
-    """Apply the §2.2 table; return (suggested_role, alternate_roles)."""
+ID_NAME_PATTERN = re.compile(r"(?:_|^)(id|code|key|sku)$", re.IGNORECASE)
+TEMPORAL_NAME_KEYWORDS = ("date", "datetime", "time", "year", "month",
+                          "week", "day", "timestamp", "period", "quarter")
+
+
+def _looks_like_id(name: str) -> bool:
+    name = name.strip().lower()
+    if name in {"id", "rowid", "uuid"}:
+        return True
+    return bool(ID_NAME_PATTERN.search(name))
+
+
+def _looks_temporal_name(name: str) -> bool:
+    base = name.strip().lower().rstrip("s")
+    return any(kw in base for kw in TEMPORAL_NAME_KEYWORDS)
+
+
+def infer_role(dtype: str, nunique: int, row_count: int,
+               name: str = "") -> tuple[ColumnRole, List[ColumnRole]]:
+    """Apply the §2.2 table; return (suggested_role, alternate_roles).
+
+    Dtype checks win over the all-unique heuristic: a datetime column is
+    always temporal and a numeric column is always a measure (an all-unique
+    numeric is only an identifier when its name looks like an id — e.g.
+    order_id, zip_code — otherwise it is a measure with "identifier" as an
+    alternate for the LLM to consider).
+    """
     if row_count == 0:
         return "dimension", []
-    if nunique == row_count:
-        return "identifier", []
     if _is_temporal(dtype):
         return "temporal", []
     if _is_numeric(dtype):
+        if nunique == row_count:
+            if _looks_like_id(name):
+                return "identifier", ["measure"]
+            return "measure", ["identifier"]
         if nunique > 20:
             return "measure", []
         return "measure", ["categorical"]
     if dtype == "bool":
         return "dimension", ["categorical"]
+    if _looks_temporal_name(name):
+        return "temporal", ["dimension"]
+    if nunique == row_count:
+        return "identifier", []
     if nunique <= 20:
         return "dimension", []
     if nunique > 50:
@@ -90,7 +122,7 @@ class ColumnProfiler:
             dtype = str(profile.column_types.get(name, "object"))
             nunique = int(profile.nunique.get(name, 0))
             nullable = int(profile.missing_values.get(name, 0)) > 0
-            role, alternates = infer_role(dtype, nunique, row_count)
+            role, alternates = infer_role(dtype, nunique, row_count, name)
             facts.append(ColumnFacts(
                 name=name, dtype=dtype, nunique=nunique,
                 nullable=nullable, suggested_role=role,
@@ -218,6 +250,13 @@ def apply_role_overrides(facts: List[ColumnFacts],
         override = overrides.get(f.name)
         if override is not None:
             allowed = {f.suggested_role, *f.alternate_roles, "identifier"}
+            if _is_numeric(f.dtype):
+                allowed |= {"measure", "categorical"}
+            elif _is_temporal(f.dtype):
+                allowed |= {"temporal", "dimension"}
+            else:
+                allowed |= {"dimension", "categorical", "free_text",
+                            "temporal"}
             if override in allowed and override in ColumnRole.__args__:
                 role = override
         columns.append(ColumnUnderstanding(

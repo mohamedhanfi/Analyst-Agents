@@ -145,15 +145,17 @@ Branches:
 **Column-role rules (Python):**
 
 ```
-nunique == row_count          → identifier
 dtype datetime                → temporal
+numeric & nunique == row_count → measure   (identifier if the name is id-like: order_id, zip_code)
 numeric & nunique > 20        → measure
 numeric & nunique ≤ 20        → measure or categorical
-object & nunique ≤ 20         → dimension
+object & nunique == row_count → identifier
+object & nunique ≤ 20         → dimension  (temporal if the name is date-like: date, month, year)
 object & nunique > 50         → free_text
 ```
 
-LLM may reclassify by name (e.g. numeric `zip_code` → identifier).
+dtype rules win over the all-unique heuristic; id-like / date-like names refine it.
+LLM may reclassify by name (e.g. numeric `zip_code` → identifier) and may flip an all-unique numeric between `measure` ↔ `identifier`.
 
 > **Planning is a subtask of this same stage** — implemented as a second Crew Task inside `understanding_agent.py` (not a separate module), since it is **not** a 9th agent; it is a second Crew task of the Understanding Agent producing the DSL plan.
 

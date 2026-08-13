@@ -5,7 +5,13 @@ import json
 
 import pandas as pd
 
-from shared.core.understanding import ColumnProfiler, ColumnFacts, infer_role
+from shared.core.understanding import (
+    ColumnProfiler,
+    ColumnFacts,
+    apply_role_overrides,
+    default_plan,
+    infer_role,
+)
 from shared.schemas import DataProfile
 from shared.tools.understanding import column_profiler_tool
 
@@ -109,3 +115,52 @@ def test_infer_role_signature_stability():
     assert isinstance(role, str)
     assert isinstance(alternates, list)
     assert isinstance(ColumnFacts, type)
+
+
+def test_all_unique_float_plain_name_is_measure():
+    f = ColumnProfiler().profile_columns(
+        make_profile({"revenue": "float64"}, {"revenue": 100},
+                     row_count=100))[0]
+    assert f.suggested_role == "measure"
+    assert "identifier" in f.alternate_roles
+
+
+def test_all_unique_numeric_id_name_is_identifier():
+    f = ColumnProfiler().profile_columns(
+        make_profile({"order_id": "int64"}, {"order_id": 100},
+                     row_count=100))[0]
+    assert f.suggested_role == "identifier"
+    assert "measure" in f.alternate_roles
+
+
+def test_numeric_zip_code_is_identifier():
+    f = ColumnProfiler().profile_columns(
+        make_profile({"zip_code": "int64"}, {"zip_code": 100},
+                     row_count=100))[0]
+    assert f.suggested_role == "identifier"
+
+
+def test_all_unique_date_named_str_is_temporal():
+    f = ColumnProfiler().profile_columns(
+        make_profile({"date": "str"}, {"date": 7}, row_count=7))[0]
+    assert f.suggested_role == "temporal"
+
+
+def test_role_overrides_numeric_identifier_to_measure():
+    f = ColumnProfiler().profile_columns(
+        make_profile({"order_id": "int64"}, {"order_id": 100},
+                     row_count=100))
+    cols = apply_role_overrides(f, {"order_id": "measure"})
+    assert cols[0].role == "measure"
+
+
+def test_default_plan_uses_all_unique_measures():
+    p = make_profile({"date": "str", "revenue": "float64",
+                      "quantity": "int64"},
+                     {"date": 7, "revenue": 7, "quantity": 7},
+                     row_count=7)
+    plan = default_plan(p)
+    ops = {kpi.operation.function for kpi in plan.candidate_kpis}
+    assert "sum" in ops
+    assert "mean" in ops
+    assert plan.has_temporal_data is True
