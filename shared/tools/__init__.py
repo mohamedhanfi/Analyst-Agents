@@ -32,6 +32,11 @@ from shared.tools.cleaning import (
     iqr_outlier_tool,
     type_caster_tool,
 )
+from shared.tools.analysis import (
+    chart_planner_tool,
+    dsl_executor_tool,
+    statistical_suite_tool,
+)
 
 __all__ = [
     "file_validator_tool",
@@ -57,4 +62,7 @@ __all__ = [
     "dedup_tool",
     "iqr_outlier_tool",
     "dq_recheck_tool",
+    "dsl_executor_tool",
+    "statistical_suite_tool",
+    "chart_planner_tool",
 ]
