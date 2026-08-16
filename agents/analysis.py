@@ -24,6 +24,7 @@ import pandas as pd
 from crewai import Agent, Crew, Process, Task
 
 from analysis.chart_planner import plan_charts
+from analysis.chart_renderer import render_all
 from analysis.dsl_executor import execute_plan
 from analysis.evidence import EvidenceRegistry
 from analysis.generic import run_statistical_suite
@@ -33,7 +34,9 @@ from shared.schemas import (AnalysisPlan, ChartMetadata, CleaningResult,
                             DatasetUnderstanding, KpiResult, StatisticalResult)
 from shared.tools import (
     chart_planner_tool,
+    chart_renderer_tool,
     dsl_executor_tool,
+    evidence_registry_tool,
     statistical_suite_tool,
 )
 from shared.utils import init_run_layout, load_config
@@ -44,6 +47,8 @@ ANALYSIS_TOOLS = [
     dsl_executor_tool,
     statistical_suite_tool,
     chart_planner_tool,
+    chart_renderer_tool,
+    evidence_registry_tool,
 ]
 
 
@@ -255,6 +260,13 @@ def _compute(run_dir: Path, cfg: Dict[str, Any],
                   time.monotonic() - t0,
                   note=f"{len(charts)} charts, truncated={truncated}")
 
+    t0 = time.monotonic()
+    render_all(charts, df, kpis, run_dir / "charts")
+    _fill_chart_paths(charts, run_dir / "charts")
+    log.tool_call(STAGE, "chart_renderer_tool", "passed",
+                  time.monotonic() - t0,
+                  note=f"{len(charts)} svg files")
+
     _save_outputs(run_dir, kpis, stats, charts, truncated, registry)
     return kpis, stats, charts, truncated, len(registry)
 
@@ -303,6 +315,12 @@ def _cleaning_transformations(run_dir: Path) -> List[str]:
     ops.extend(f"flag_{flag}" for flag in result.flags_created)
     ops.extend(f"iqr_outlier_{col}" for col in result.outliers)
     return ops
+
+
+def _fill_chart_paths(charts: List[ChartMetadata], charts_dir: Path) -> None:
+    """Record charts/<chart_id>.svg in chart_metadata.json (chart_path)."""
+    for chart in charts:
+        chart.chart_path = str(charts_dir / f"{chart.chart_id}.svg")
 
 
 def _save_outputs(run_dir: Path, kpis: List[KpiResult],

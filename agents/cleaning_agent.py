@@ -295,6 +295,9 @@ def _clean_with_rechecks(run_dir: Path, df: pd.DataFrame,
             break
         current = cleaned
 
+    if final_status != "passed":
+        log.fallback(STAGE, "cleaning_retry_limit_exceeded")
+
     return result, final_status
 
 

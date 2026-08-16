@@ -34,8 +34,14 @@ from shared.tools.cleaning import (
 )
 from shared.tools.analysis import (
     chart_planner_tool,
+    chart_renderer_tool,
     dsl_executor_tool,
+    evidence_registry_tool,
     statistical_suite_tool,
+)
+from shared.tools.insights import (
+    claim_validator_tool,
+    evidence_lookup_tool,
 )
 
 __all__ = [
@@ -65,4 +71,8 @@ __all__ = [
     "dsl_executor_tool",
     "statistical_suite_tool",
     "chart_planner_tool",
+    "chart_renderer_tool",
+    "evidence_registry_tool",
+    "evidence_lookup_tool",
+    "claim_validator_tool",
 ]

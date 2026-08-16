@@ -291,6 +291,32 @@ def _execute_growth(df: pd.DataFrame, op: DslOperation) -> OperationResult:
         growth_series=series_list)
 
 
+def growth_series(df: pd.DataFrame, op: DslOperation) -> List[Dict[str, Any]]:
+    """Public access to the deterministic growth series (used by the SVG
+    chart renderer — the KPI scalar alone is not enough to draw a line)."""
+    return _execute_growth(df, op).growth_series
+
+
+def grouped_values(df: pd.DataFrame, op: DslOperation
+                   ) -> List[Tuple[str, Any]]:
+    """Deterministic (label, value) pairs for grouped aggregate operations —
+    used by the SVG chart renderer (KPI results are expanded per group)."""
+    result = _execute_aggregate(df, op)
+    if isinstance(result.value, dict):
+        return sorted((str(k), v) for k, v in result.value.items())
+    return []
+
+
+def grouped_growth_values(df: pd.DataFrame, op: DslOperation
+                          ) -> List[Tuple[str, Any]]:
+    """Deterministic {group: latest-period value} pairs for grouped growth
+    operations — used by the SVG chart renderer (line/area per group)."""
+    result = _execute_growth(df, op)
+    if isinstance(result.value, dict):
+        return sorted((str(k), v) for k, v in result.value.items())
+    return []
+
+
 def _resolve_period(period: Optional[str]) -> str:
     if not period:
         return "MoM"

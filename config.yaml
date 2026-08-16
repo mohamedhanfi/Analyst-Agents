@@ -3,6 +3,10 @@
 
 pipeline_version: "4.3.0"
 
+# §2.6: human review gate for insights (approve / edit / regenerate).
+# false in automated runs; set true for an interactive checkpoint.
+review_required: false
+
 llm:
   provider: openrouter
   base_url: "https://openrouter.ai/api/v1"

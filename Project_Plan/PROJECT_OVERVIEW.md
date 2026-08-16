@@ -63,7 +63,7 @@ Flow: **Upload → 1 Ingestion → 2 Understanding → 3 Data Quality → 4 Clea
 | 2 | **Understanding** | Classifies each column's role (measure / dimension / temporal / identifier…), detects the domain (sales, hr…), builds the analysis plan (a whitelist of safe KPI formulas) | LLM + Python | [DONE] |
 | 3 | **Data Quality** | Deterministic checks: schema, invalid values (negative revenue, impossible dates…), missingness patterns (MCAR/MAR/MNAR), duplicates, referential integrity, business rules | Python only (no LLM) | [DONE] |
 | 4 | **Cleaning** | Fixes the data per strategy: fill median/mode, flag non-random missingness, cast types, drop duplicates / negatives, IQR outliers; re-checks quality (max 3 retries) | LLM (strategy) + Python (execute) | [DONE] |
-| 5 | **Analysis** | **5a – compute:** runs the whitelist KPIs, the statistical suite (descriptive, correlation, distribution, trend, comparison) and picks chart kinds from a data-shape rule table; registers every value as evidence. **5b – draw:** renders the actual `*.svg` charts | LLM (select/rank) + Python (compute) | 5a [DONE] · 5b [STUB, Task 7] |
+| 5 | **Analysis** | **5a – compute:** runs the whitelist KPIs, the statistical suite (descriptive, correlation, distribution, trend, comparison) and picks chart kinds from a data-shape rule table (12-kind whitelist); registers every value as evidence. **5b – draw:** renders the actual `*.svg` charts — the LLM may propose chart kinds with a reason, Python validates them (whitelist + data fit) and falls back to the rule table when rejected | LLM (select/rank/propose) + Python (validate/compute/draw) | 5a [DONE] · 5b [Task 7] |
 | 6 | **Insights** | Writes evidence-grounded insights and hedged recommendations; validates every claim against the evidence registry | LLM (text) + Python (validate) | [STUB, Task 8] |
 | 7 | **Report** | Renders the final HTML report (Python, from a template) and writes only the 3–5 sentence executive summary (LLM) | Python + LLM (summary only) | [STUB, Task 9] |
 | 8 | **QA** | Recomputes 100% of the KPIs independently, validates structure, and issues the final verdict deterministically | Python (authoritative) + LLM (review) | [STUB, Task 10] |
@@ -96,14 +96,21 @@ sum  mean  median  count  nunique  min  max  std  growth  correlation  ratio
 - **Comparison:** t-test + Cohen's d, Mann-Whitney U, ANOVA + eta-squared,
   Kruskal-Wallis + post-hoc, chi-square + Cramér's V.
 
-### The chart planner (stage 5a)
+### The chart planner (stage 5a) + the renderer (stage 5b)
 
 Python inspects each candidate's data shape and picks a chart kind from an
 ordered 9-rule table (e.g. dates + ≥3 points → line; 2 measures → scatter;
 ≥3 measures → heatmap; share/"% of whole" → doughnut; distribution → histogram).
+The **12-kind whitelist** also includes `area`, `boxplot`, `stacked_bar`, `pie`,
+`lollipop` — the LLM may propose them per KPI (`proposed_kinds`); Python
+validates each proposal against the whitelist and the data shape, rejecting
+what cannot be drawn (with a reason) and falling back to the rule table.
 If the data is too thin, the chart is downgraded to a simple bar stamped
 `reliability: "low_n"`. A maximum of `max_chart_count` (20) charts are kept;
-the rest are dropped and `charts_truncated` is set.
+the rest are dropped and `charts_truncated` is set. Stage 5b then renders each
+kept chart as a hand-rolled SVG (`analysis/chart_renderer.py`, no plotting
+library): Okabe-Ito color-blind-safe palette, value labels, line markers, and
+an XML-escaped caption (title + `reliability` + `evidence_id`) for alt text.
 
 ---
 
@@ -132,7 +139,7 @@ runs/<run_id>/
 │   ├── kpis.json           (stage 5)
 │   ├── statistical_results.json    (stage 5)
 │   ├── evidence_registry.json      (stage 5 — the lineage log)
-│   ├── charts/             (stage 5b, future — the SVG files)
+│   ├── charts/             (stage 5b — the SVG files)
 │   └── insights.json       (stage 6, future)
 └── logs/
     └── run.jsonl           # audit trail: every stage + tool call
@@ -158,8 +165,7 @@ Insight Forge
 │   ├── understanding_agent.py     # [DONE] stage 2
 │   ├── data_quality.py            # [DONE] stage 3 (pure Python, no LLM)
 │   ├── cleaning_agent.py          # [DONE] stage 4
-│   ├── analysis.py                # [DONE] stage 5a (compute + crew runner)
-│   ├── analyst_agent.py           # [STUB] stage 5b charts (Task 7) — empty
+│   ├── analysis.py                # [DONE] stage 5a (compute + crew runner) · 5b (charts) [Task 7]
 │   ├── insight_agent.py           # [STUB] stage 6 (Task 8) — empty
 │   ├── report_agent.py            # [STUB] stage 7 (Task 9) — empty
 │   └── qa_agent.py                # [STUB] stage 8 (Task 10) — empty
@@ -167,7 +173,8 @@ Insight Forge
 ├── analysis/                      # [DONE] pure math, no LLM (used by stage 5a)
 │   ├── evidence.py                # evidence ids + evidence_registry.json (the only writer)
 │   ├── dsl_executor.py            # runs the whitelist KPI formulas
-│   ├── chart_planner.py           # data-shape rule table -> chart kind
+│   ├── chart_planner.py           # 12-kind whitelist + rule table + proposal validation
+│   ├── chart_renderer.py          # [Task 7] hand-rolled SVG renderers (12 kinds)
 │   ├── generic/                   # statistical suite: descriptive, correlation,
 │   │                              #   distribution, trend, comparison
 │   └── domains/                   # [PLACEHOLDER] future domain KPIs
@@ -190,7 +197,7 @@ Insight Forge
 │   │   ├── understanding.py       #   column_profiler / domain_classifier / dsl_plan_builder
 │   │   ├── data_quality.py        #   7 stage-3 check/repair tools
 │   │   ├── cleaning.py            #   7 stage-4 cleaning tools
-│   │   └── analysis.py            #   3 stage-5 tools (dsl_executor / statistical_suite / chart_planner)
+│   │   └── analysis.py            #   5 stage-5 tools (dsl_executor / statistical_suite / chart_planner / chart_renderer / evidence_registry)
 │   ├── schemas.py                 # Pydantic contracts for every artifact
 │   ├── dsl_validator.py           # KPI whitelist rules
 │   ├── llm.py                     # one LLM factory (used by all agents)
@@ -210,7 +217,7 @@ Insight Forge
 │                                  # [EMPTY] future test suites (Task 12)
 │
 └── Project_Plan/                  # documentation
-    ├── Analyst-Agents.md          #   the spec (v4.3) — full design
+    ├── Analyst-Agents.md          #   the spec (v4.4) — full design
     ├── DAILY_TASKS.md             #   task tracker (12 tasks, who does what)
     ├── PROJECT_STRUCTURE.md       #   detailed structure reference
     ├── STATE.md                   #   status notes
@@ -241,7 +248,7 @@ path produce identical artifacts (6 KPIs · 16 statistical tests · 4 charts ·
 
 | Task | Area | What's left |
 |------|------|-------------|
-| 7 | Stage 5b Charts | render real `*.svg` files (`analyst_agent.py`, chart_renderer, evidence_registry tool) |
+| 7 | Stage 5b Charts | render real `*.svg` files — `analysis/chart_renderer.py` (12-kind whitelist), hybrid `validate_proposed_kinds`, `chart_renderer_tool` + `evidence_registry_tool`, `chart_path` in `chart_metadata.json` |
 | 8 | Stage 6 Insights | evidence-grounded insights + recommendations + claim validator |
 | 9 | Stage 7 Report | HTML report from the template + executive summary |
 | 10 | Stage 8 QA | independent recomputation + final verdict (`agents.qa.model` is still a TODO) |
@@ -251,8 +258,8 @@ path produce identical artifacts (6 KPIs · 16 statistical tests · 4 charts ·
 Notes:
 - The agent files for tasks 7–10 and the whole `crew/` + `main.py` exist as
   **empty stubs** — the placeholders are in place, the logic is not.
-- **Nothing is pushed past commit `a872718`.** Tasks 5 and 6 are complete but
-  uncommitted in the working tree.
+- **Latest commits:** Task 5 (Stage 4 Cleaning) `944b13e`, Task 6 (Stage 5a
+  Analysis) `2e02c88` — pulled into the working tree.
 - The report template (`resources/report_template.html`) already exists and
   will be used by Task 9.
 
@@ -313,6 +320,8 @@ python tests\Flow_review\app.py --demo
 | **Generic Mode** | If the user can't answer business questions in time, the run continues with generic defaults instead of blocking. |
 | **MCAR / MAR / MNAR** | Missingness patterns (completely random / related to other columns / related to the value itself). Cleaning treats them differently. |
 | **low_n** | A reliability stamp on a chart whose data is too thin (downgraded to a simple bar). |
+| **12-kind whitelist** | The only chart kinds Python can render: `bar · barh · line · doughnut · histogram · scatter · heatmap · area · boxplot · stacked_bar · pie · lollipop`. |
+| **proposed_kinds** | The LLM's chart-kind suggestions `[{kpi_id, kind, reason}]`; Python validates each (whitelist + data fit) and falls back to the rule table when rejected. |
 | **charts_truncated** | Flag that says some charts were dropped to respect the 20-chart cap. |
 | **Verdict** | Final result: `APPROVED`, `APPROVED_WITH_WARNINGS`, or `NEEDS_REVISION`. |
 
@@ -322,7 +331,7 @@ python tests\Flow_review\app.py --demo
 
 | For this… | See this file |
 |-----------|---------------|
-| The full design spec (v4.3) — every stage in depth | `Project_Plan/Analyst-Agents.md` |
+| The full design spec (v4.4) — every stage in depth | `Project_Plan/Analyst-Agents.md` |
 | The task tracker — 12 tasks, owners, handoff log | `Project_Plan/DAILY_TASKS.md` |
 | Detailed file-by-file structure | `Project_Plan/PROJECT_STRUCTURE.md` |
 | The design-level README with the same info expanded | `README.md` |

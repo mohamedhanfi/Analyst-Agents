@@ -184,7 +184,8 @@ class CleaningResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 ChartKind = Literal["bar", "barh", "line", "doughnut",
-                    "histogram", "scatter", "heatmap"]
+                    "histogram", "scatter", "heatmap",
+                    "area", "boxplot", "stacked_bar", "pie", "lollipop"]
 
 
 class KpiResult(BaseModel):
@@ -228,6 +229,7 @@ class ChartMetadata(BaseModel):
     reason: str
     columns: List[str] = Field(default_factory=list)
     title: str = ""
+    kpi_id: str | None = None        # base KPI candidate this chart draws
     reliability: str | None = None     # "low_n" when the planner downgrades
     chart_path: str | None = None
     evidence_id: str | None = None

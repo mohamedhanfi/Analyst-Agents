@@ -141,6 +141,27 @@
   .tok-kw { color: #f0abfc; }
   .hint { color: var(--muted); font-size: 12px; }
   .empty { color: var(--muted); font-size: 12.5px; padding: 10px 4px; }
+
+  .chart { position: relative; background: #0a1120; border-radius: 8px;
+           margin: 8px 12px 12px; }
+  .chart .chead { display: flex; justify-content: space-between; gap: 8px;
+                  padding: 6px 10px 0; font-size: 11px; color: var(--muted); }
+  .chart .chead b { color: var(--text); }
+  .chart svg { display: block; width: 100%; height: auto; cursor: pointer; }
+  .chart svg [fill]:not([width='800']), .chart svg circle, .chart svg path,
+  .chart svg polyline, .chart svg polygon {
+    transition: opacity .15s ease; }
+  .chart svg .hc-hit { opacity: 1 !important; }
+  .chart-tip { position: absolute; display: none; pointer-events: none;
+               background: #061224; border: 1px solid var(--blue);
+               color: var(--text); border-radius: 6px; padding: 4px 9px;
+               font-size: 11.5px; font-weight: 700; white-space: nowrap;
+               z-index: 10; box-shadow: 0 4px 14px rgba(0,0,0,.5); }
+
+  #charts { display: grid; grid-template-columns: repeat(auto-fill,
+            minmax(400px, 1fr)); gap: 14px; }
+  #charts .chart { margin: 0; border: 1px solid var(--line); }
+  #charts .chart .chead { padding-top: 8px; }
 </style>
 </head>
 <body>
@@ -160,6 +181,16 @@
 
 <main>
   <div class="pipe" id="pipe"></div>
+
+  <div class="panel">
+    <div class="headrow">
+      <h2 style="margin:0">Charts — Stage 5b render</h2>
+      <span class="hint">hover any bar / point / cell to inspect — the SVG
+        on disk stays deterministic, all effects are client-side</span>
+    </div>
+    <div id="charts"><div class="empty">Charts appear here when the Analysis
+      stage finishes.</div></div>
+  </div>
 
   <div class="panel">
     <div class="headrow">
@@ -201,6 +232,7 @@ const EV_KINDS = new Set(["stage_start","stage_end","tool_call","llm_call",
 const FINISHED = new Set(["passed","failed","needs_repair"]);
 
 let seenArtifacts = new Set();
+let chartsRendered = new Set();
 let clientOffset = 0;
 let allEvents = [];               // full event history for the run in view
 let stageFlow = {};               // stage id -> [[label,value], ...] chips
@@ -292,6 +324,11 @@ const ARTIFACTS = {
                   "metadata/analysis_plan.json"],
   data_quality: ["metadata/data_quality_report.json",
                  "metadata/repair_log.json"],
+  cleaning: ["data/processed/cleaned_data.csv",
+             "metadata/cleaning_result.json"],
+  analysis: ["outputs/kpis.json", "outputs/statistical_results.json",
+             "metadata/chart_metadata.json", "charts/"],
+  insights: ["outputs/insights.json"],
 };
 
 function renderArtifacts(events) {
@@ -338,16 +375,119 @@ async function renderArtifact(stage, rel) {
       "<pre>" + escapeHtml(raw) + "</pre>";
     wirePanelTools(det, raw);
   } else if (data.dir !== undefined) {
-    const raw = data.files.join("\n");
+    const isCharts = data.dir.endsWith("/charts") || data.dir.endsWith("charts/");
+    if (isCharts) {
+      // chart SVGs live in the dedicated Charts section, not here
+      renderChartsSection(data.files, rel);
+      const raw = data.files.join("\n");
+      det.innerHTML = '<summary>' + escapeHtml(stage + " / " + label) +
+        meta + tools + '<span class="tag">' + data.files.length +
+        " file(s)</span></summary>" +
+        "<pre>" + escapeHtml(raw) + "</pre>";
+      det.querySelector(".meta").textContent =
+        data.files.length + " file(s)";
+      wirePanelTools(det, raw);
+    } else {
+      const raw = data.files.join("\n");
+      det.innerHTML = '<summary>' + escapeHtml(stage + " / " + label) +
+        meta + tools + '<span class="tag">' + data.files.length +
+        " file(s)</span></summary>" +
+        "<pre>" + escapeHtml(raw) + "</pre>";
+      det.querySelector(".meta").textContent =
+        data.files.length + " file(s)";
+      wirePanelTools(det, raw);
+    }
+  } else if (data.svg !== undefined) {
     det.innerHTML = '<summary>' + escapeHtml(stage + " / " + label) +
-      meta + tools + '<span class="tag">' + data.files.length +
-      " file(s)</span></summary>" +
-      "<pre>" + escapeHtml(raw) + "</pre>";
-    det.querySelector(".meta").textContent =
-      data.files.length + " file(s)";
-    wirePanelTools(det, raw);
+      meta + tools + "</summary>" +
+      '<div class="chart"><div class="chead"><b>' + escapeHtml(label) +
+      "</b><span></span></div>" + data.svg + "</div>";
+    wirePanelTools(det, data.svg);
+    wireChartInteractivity(det.querySelector(".chart"));
   }
   box.prepend(det);
+}
+
+async function renderChartsSection(files, relDir) {
+  const box = $("charts");
+  box.querySelector(".empty")?.remove();
+  for (const f of files.filter(n => n.endsWith(".svg"))) {
+    const key = viewingRunId + ":" + f;
+    if (chartsRendered.has(key)) continue;
+    chartsRendered.add(key);
+    const q = "rel=" + encodeURIComponent(relDir + f);
+    if (viewingRunId) q += "&run_id=" + encodeURIComponent(viewingRunId);
+    let data;
+    try { data = await (await fetch("/api/artifact?" + q)).json(); }
+    catch (_) { continue; }
+    if (data.svg === undefined) continue;
+    const desc = data.svg.match(/<desc[^>]*>([\s\S]*?)<\/desc>/);
+    const kind = desc && desc[1].match(/kind=([\w]+)/)
+      ? " · " + desc[1].match(/kind=([\w]+)/)[1] : "";
+    const wrap = document.createElement("div");
+    wrap.className = "chart";
+    wrap.innerHTML = '<div class="chead"><b>' + escapeHtml(f) +
+      "</b><span>" + escapeHtml(kind) + "</span></div>" + data.svg;
+    box.appendChild(wrap);
+    wireChartInteractivity(wrap);
+  }
+}
+
+// ------------------------------------------------------------------
+// Option 1: chart interactivity — small vanilla JS, no dependencies.
+// The SVG on disk stays deterministic; every effect is client-side.
+// ------------------------------------------------------------------
+
+const CHART_HIT = 'rect[fill]:not([width="800"]), circle, polyline, ' +
+                  "path, polygon, line[stroke]";
+
+function chartShapes(svg) {
+  return Array.from(svg.querySelectorAll(CHART_HIT))
+    .filter(sh => !sh.closest(".chart-tip"));
+}
+
+function nearestLabel(sh, svg) {
+  const r = sh.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  let best = null, bestD = 1e9;
+  svg.querySelectorAll("text").forEach(t => {
+    const tr = t.getBoundingClientRect();
+    const d = Math.hypot(tr.left + tr.width / 2 - cx,
+                         tr.top + tr.height / 2 - cy);
+    if (d < bestD) { bestD = d; best = t; }
+  });
+  return bestD < 46 && best ? best.textContent.trim() : "";
+}
+
+function wireChartInteractivity(chart) {
+  const svg = chart.querySelector("svg");
+  if (!svg) return;
+  const tip = document.createElement("div");
+  tip.className = "chart-tip";
+  chart.appendChild(tip);
+  const shapes = chartShapes(svg);
+  for (const sh of shapes) {
+    sh.addEventListener("mouseenter", (ev) => {
+      for (const o of chartShapes(svg)) o.style.opacity = "0.25";
+      sh.classList.add("hc-hit");
+      const text = nearestLabel(sh, svg) ||
+        (svg.querySelector("title") || {}).textContent ||
+        (sh.getAttribute("aria-label") || "");
+      if (text) {
+        tip.textContent = text.trim();
+        tip.style.display = "block";
+        const r = svg.getBoundingClientRect();
+        tip.style.left = Math.min(ev.clientX - r.left + 12,
+                                  r.width - 90) + "px";
+        tip.style.top = Math.max(ev.clientY - r.top - 30, 4) + "px";
+      }
+    });
+    sh.addEventListener("mouseleave", () => {
+      for (const o of chartShapes(svg)) o.style.opacity = "1";
+      sh.classList.remove("hc-hit");
+      tip.style.display = "none";
+    });
+  }
 }
 
 function wirePanelTools(det, raw) {
@@ -415,6 +555,25 @@ function summarize(label, c) {
       ? (c.missingness.rate * 100).toFixed(1) + "%" : undefined],
     ["issues", (c.issues || []).length],
   ];
+  if (label === "cleaning_result.json") return [
+    ["status", c.status],
+    ["rows before", c.rows_before],
+    ["rows after", c.rows_after],
+    ["duplicates removed", c.duplicates_removed],
+    ["outlier cols", Object.keys(c.outliers || {}).length],
+  ];
+  if (label === "chart_metadata.json") return [
+    ["charts", (c.charts || []).length],
+    ["truncated", c.charts_truncated],
+  ];
+  if (label === "kpis.json") return [
+    ["KPIs", (c.kpis || []).length],
+  ];
+  if (label === "insights.json") return [
+    ["insights", (c.insights || []).length],
+    ["recommendations", (c.recommendations || []).length],
+    ["warnings", (c.warnings || []).length],
+  ];
   return null;
 }
 
@@ -457,11 +616,14 @@ async function startRun() {
 
 function resetView() {
   seenArtifacts.clear();
+  chartsRendered.clear();
   allEvents = [];
   stageFlow = {};
   clientOffset = 0;
   $("artifacts").innerHTML = '<div class="empty">Artifacts appear here as ' +
     'each stage finishes.</div>';
+  $("charts").innerHTML = '<div class="empty">Charts appear here when the ' +
+    'Analysis stage finishes.</div>';
   $("dataflow").innerHTML = '<div class="empty">Nothing to show yet — run ' +
     'the pipeline or pick a past run above.</div>';
 }

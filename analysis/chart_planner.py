@@ -8,14 +8,15 @@ ChartMetadata entries (one per chart) — the actual drawing happens in stage 5b
 from __future__ import annotations
 
 import re
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, get_args
 
 import pandas as pd
 
+from analysis.dsl_executor import growth_series
 from analysis.evidence import EvidenceRegistry
 from analysis.generic._helpers import measure_columns
-from shared.schemas import (AnalysisPlan, ChartMetadata, DatasetUnderstanding,
-                            KpiCandidate)
+from shared.schemas import (AnalysisPlan, ChartKind, ChartMetadata,
+                            DatasetUnderstanding, KpiCandidate)
 
 THIN_THRESHOLD = 10          # rows below this => downgrade + reliability low_n
 RULE = {                     # rule-table reference (spec §2.5)
@@ -30,6 +31,7 @@ RULE = {                     # rule-table reference (spec §2.5)
     "rule_9": "rule_9: share / '% of whole', parts ~ 100% -> doughnut",
 }
 
+CHART_KINDS: Tuple[str, ...] = get_args(ChartKind)
 _SHARE_RE = re.compile(r"share|%\b|\bof\s+whole|\bpart\b", re.IGNORECASE)
 _AGGREGATES = {"sum", "mean", "median", "count", "nunique", "min", "max",
                "std", "ratio"}
@@ -77,10 +79,20 @@ def _dedupe(candidates: List[ChartMetadata]) -> List[ChartMetadata]:
 
 def _plan_kpi(df: pd.DataFrame, kpi: KpiCandidate,
               registry: EvidenceRegistry, index: int,
-              threshold: int) -> Optional[ChartMetadata]:
+              threshold: int,
+              proposal: Dict[str, str] | None = None) -> Optional[ChartMetadata]:
     op = kpi.operation
-    function = op.function
     evidence_id = registry.mint()
+
+    if proposal is not None:
+        chart = _plan_proposed(df, kpi, proposal["kind"],
+                               proposal.get("reason", ""), evidence_id, index,
+                               threshold)
+        if chart is not None:
+            _register(registry, chart)
+        return chart
+
+    function = op.function
 
     if function == "growth":
         chart = _rule_2_growth(df, kpi, evidence_id, index, threshold)
@@ -98,25 +110,59 @@ def _plan_kpi(df: pd.DataFrame, kpi: KpiCandidate,
     return chart
 
 
+def _plan_proposed(df: pd.DataFrame, kpi: KpiCandidate, kind: str,
+                   reason: str, evidence_id: str, index: int,
+                   threshold: int) -> Optional[ChartMetadata]:
+    """Build a chart for an LLM-proposed kind (already validated)."""
+    op = kpi.operation
+    columns: List[str] = []
+    for name in (op.column_a, op.column_b, op.column, op.over_column,
+                 *(op.group_by or [])):
+        if name and name not in columns and name in df.columns:
+            columns.append(name)
+    chart = ChartMetadata(
+        chart_id=f"CH-{index:03d}", kind=kind,
+        reason=f"llm_proposed_{kind}: {reason}".strip(),
+        columns=columns,
+        title=kpi.name or " | ".join(columns),
+        kpi_id=kpi.kpi_id,
+        evidence_id=evidence_id,
+    )
+    if _thin(df, threshold):
+        return _downgrade_low_n(chart, f"{len(df)} rows < {threshold}")
+    return chart
+
+
 def _rule_2_growth(df: pd.DataFrame, kpi: KpiCandidate, evidence_id: str,
                    index: int, threshold: int) -> Optional[ChartMetadata]:
     op = kpi.operation
     over = op.over_column
     if not over or over not in df.columns:
         return None
-    values = pd.to_datetime(df[over], errors="coerce").dropna()
-    if values.empty:
+    try:
+        series = growth_series(df, op)
+    except (KeyError, ValueError, TypeError):
         return None
-    points = values.nunique()
+    if not series:
+        return None  # nothing drawable (e.g. YoY on a 10-day sample)
+    if len(series) < 3:
+        return _downgrade_low_n(
+            ChartMetadata(
+                chart_id=f"CH-{index:03d}", kind="line",
+                reason=RULE["rule_2"],
+                columns=[over, op.column or ""],
+                title=f"{kpi.name} ({op.period or 'MoM'} growth)",
+                kpi_id=kpi.kpi_id,
+                evidence_id=evidence_id,
+            ), f"{len(series)} time points < 3")
     chart = ChartMetadata(
         chart_id=f"CH-{index:03d}", kind="line",
         reason=RULE["rule_2"],
         columns=[over, op.column or ""],
         title=f"{kpi.name} ({op.period or 'MoM'} growth)",
+        kpi_id=kpi.kpi_id,
         evidence_id=evidence_id,
     )
-    if points < 3:
-        return _downgrade_low_n(chart, f"{points} time points < 3")
     if _thin(df, threshold):
         return _downgrade_low_n(chart, f"{len(df)} rows < {threshold}")
     return chart
@@ -133,6 +179,7 @@ def _rule_7_scatter(df: pd.DataFrame, kpi: KpiCandidate, col_a: str,
         reason=RULE["rule_7"],
         columns=[col_a, col_b],
         title=f"{kpi.name} ({col_a} x {col_b})",
+        kpi_id=kpi.kpi_id,
         evidence_id=evidence_id,
     )
     if _thin(df, threshold):
@@ -162,6 +209,7 @@ def _rule_dimension(df: pd.DataFrame, kpi: KpiCandidate, dimension: str,
         chart_id=f"CH-{index:03d}", kind=kind, reason=reason,
         columns=[dimension, kpi.operation.column or ""],
         title=kpi.name or dimension,
+        kpi_id=kpi.kpi_id,
         evidence_id=evidence_id,
     )
     if _thin(df, threshold):
@@ -231,6 +279,85 @@ def _plan_measure_relation(df: pd.DataFrame, registry: EvidenceRegistry,
 
 
 # ---------------------------------------------------------------------------
+# Hybrid proposals — LLM suggests kinds, Python validates (§2.5)
+# ---------------------------------------------------------------------------
+
+
+def _role_columns(df: pd.DataFrame, understanding: DatasetUnderstanding,
+                  roles: Tuple[str, ...]) -> List[str]:
+    return [c.name for c in understanding.columns
+            if c.role in roles and c.name in df.columns]
+
+
+def _kind_fits(df: pd.DataFrame, understanding: DatasetUnderstanding,
+               kpi: KpiCandidate, kind: str) -> bool:
+    """Data-shape feasibility per kind — a proposal must be drawable."""
+    numeric = _role_columns(df, understanding, ("measure",))
+    temporal = _role_columns(df, understanding, ("temporal",))
+    dimensions = _role_columns(df, understanding,
+                               ("dimension", "categorical"))
+    op = kpi.operation
+    over = op.over_column if op.over_column in temporal else (
+        temporal[0] if temporal else None)
+    group_dim = (op.group_by or [None])[0]
+    dimension = group_dim if group_dim in dimensions else (
+        dimensions[0] if dimensions else None)
+
+    if kind in ("line", "area"):
+        return over is not None and df[over].nunique() >= 3
+    if kind == "scatter":
+        return len(numeric) >= 2
+    if kind == "heatmap":
+        return len(numeric) >= 3
+    if kind in ("histogram", "boxplot"):
+        target = op.column if op.column in numeric else (
+            numeric[0] if numeric else None)
+        return target is not None
+    if kind in ("doughnut", "pie"):
+        if _SHARE_RE.search(kpi.name or ""):
+            return dimension is not None or len(numeric) >= 1
+        return dimension is not None and df[dimension].dropna().nunique() <= 2
+    if kind == "stacked_bar":
+        return dimension is not None and len(numeric) >= 2
+    if kind in ("bar", "barh", "lollipop"):
+        return dimension is not None
+    return False
+
+
+def validate_proposed_kinds(df: pd.DataFrame, plan: AnalysisPlan,
+                            understanding: DatasetUnderstanding,
+                            proposals: List[Dict[str, Any]] | None,
+                            ) -> Tuple[Dict[str, Dict[str, str]], List[str]]:
+    """Whitelist + feasibility check for LLM-proposed chart kinds.
+
+    Returns (accepted {kpi_id: {kind, reason}}, errors). Rejected proposals
+    never reach the planner — they fall back to the rule table.
+    """
+    errors: List[str] = []
+    accepted: Dict[str, Dict[str, str]] = {}
+    known = {k.kpi_id: k for k in plan.candidate_kpis}
+    for index, entry in enumerate(proposals or []):
+        if not isinstance(entry, dict):
+            errors.append(f"proposal #{index}: must be an object")
+            continue
+        kpi_id = str(entry.get("kpi_id") or "")
+        kind = str(entry.get("kind") or "")
+        if kpi_id not in known:
+            errors.append(f"proposal #{index}: unknown kpi_id '{kpi_id}'")
+            continue
+        if kind not in CHART_KINDS:
+            errors.append(f"{kpi_id}: unknown chart kind '{kind}'")
+            continue
+        if not _kind_fits(df, understanding, known[kpi_id], kind):
+            errors.append(f"{kpi_id}: kind '{kind}' does not fit the data "
+                          f"(see data shape rules)")
+            continue
+        accepted[kpi_id] = {"kind": kind,
+                            "reason": str(entry.get("reason") or "")}
+    return accepted, errors
+
+
+# ---------------------------------------------------------------------------
 # Ranking + truncation (spec §1: max_chart_count, drop lowest-ranked)
 # ---------------------------------------------------------------------------
 
@@ -265,18 +392,25 @@ def plan_charts(df: pd.DataFrame, plan: AnalysisPlan,
                 registry: EvidenceRegistry,
                 max_chart_count: int = 20,
                 thin_threshold: int = THIN_THRESHOLD,
+                proposals: List[Dict[str, Any]] | None = None,
                 ) -> Tuple[List[ChartMetadata], bool]:
     """Plan all candidate charts from the KPI list + numeric/ordinal columns.
 
+    ``proposals`` (optional) are LLM-suggested kinds
+    ``[{kpi_id, kind, reason}]`` — validated internally (whitelist +
+    data-shape feasibility); rejected entries fall back to the rule table.
     Returns (chart_metadata list, charts_truncated). Order after ranking is the
     final draw order; excess candidates are dropped lowest-ranked first.
     """
+    accepted, _ = validate_proposed_kinds(df, plan, understanding, proposals)
     measures = measure_columns(understanding, df)
     candidates: List[ChartMetadata] = []
     index = 0
 
     for kpi in plan.candidate_kpis:
-        chart = _plan_kpi(df, kpi, registry, index + 1, thin_threshold)
+        proposal = accepted.get(kpi.kpi_id)
+        chart = _plan_kpi(df, kpi, registry, index + 1, thin_threshold,
+                          proposal=proposal)
         if chart is not None:
             candidates.append(chart)
             index += 1

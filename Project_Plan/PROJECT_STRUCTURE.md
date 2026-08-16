@@ -1,6 +1,6 @@
 # Insight Forge — Project Structure
 
-> Quick reference for the `insight-forge/` layout and what lives inside each file, based on `Project_Plan/Analyst-Agents.md` (v4.3).
+> Quick reference for the `insight-forge/` layout and what lives inside each file, based on `Project_Plan/Analyst-Agents.md` (v4.4).
 > Full implementation guide: [`Analyst-Agents.md`](./Analyst-Agents.md)
 
 ---
@@ -21,14 +21,16 @@ insight-forge/
 │   ├── understanding_agent.py  # stage 2 — roles + domain + DSL plan (planning = its 2nd Task, not a separate file)
 │   ├── data_quality.py         # stage 3 — Engine only, no LLM (deterministic Flow step)
 │   ├── cleaning_agent.py       # stage 4
-│   ├── analyst_agent.py        # stage 5
+│   ├── analysis.py             # stage 5 — compute (5a) + charts rendering (5b) in ONE agent
 │   ├── insight_agent.py        # stage 6
 │   ├── report_agent.py         # stage 7
 │   └── qa_agent.py             # stage 8
 ├── analysis/                   # pure computation, no LLM
-│   ├── chart_planner.py        # data-shape rule table → chart kind + reason (deterministic)
+│   ├── chart_planner.py        # 12-kind whitelist + data-shape rule table + validate_proposed_kinds (hybrid LLM proposals)
+│   ├── chart_renderer.py       # hand-rolled SVG renderers (Okabe-Ito, labels, captions) — one per kind
+│   ├── dsl_executor.py         # whitelist DSL ops over ALL rows (filters, group_by, growth, correlation)
 │   ├── evidence.py             # evidence_id minting + registry read/write (the only writer)
-│   ├── generic/                # descriptive · correlation · distribution · trend
+│   ├── generic/                # descriptive · correlation · distribution · trend · comparison
 │   └── domains/                # sales · finance · marketing · hr · operations
 ├── shared/
 │   ├── core/                    # pure logic, no CrewAI — the unit-testable layer
@@ -36,13 +38,21 @@ insight-forge/
 │   │   ├── reader.py            # FileReader (discovery + extract_sheet, streamed)
 │   │   ├── profiler.py          # DataProfiler (profile + samples, PII-redacted)
 │   │   ├── pii.py               # PiiDetector (rule-based, no LLM)
-│   │   └── business_context.py  # BusinessContextGatherer (dialog + generic mode)
+│   │   ├── business_context.py  # BusinessContextGatherer (dialog + generic mode)
+│   │   ├── understanding.py     # role rules §2.2 + domain facts + DSL plan builder
+│   │   ├── data_quality.py      # §2.3 checks + deterministic repair (stage 3 core)
+│   │   └── cleaning.py          # §2.4 strategy table + execution (stage 4 core)
 │   ├── tools/                   # CrewAI @tool wrappers, aggregated in __init__.py
 │   │   ├── file_io.py           # file_validator_tool · file_reader_tool · file_sheet_extract_tool
 │   │   ├── profiling.py         # pii_detector_tool · data_profiler_tool
-│   │   └── human.py             # human_input_tool
+│   │   ├── human.py             # human_input_tool
+│   │   ├── understanding.py     # column_profiler · domain_classifier · dsl_plan_builder
+│   │   ├── data_quality.py      # 6+1 stage-3 check tools
+│   │   ├── cleaning.py          # 7 stage-4 tools
+│   │   └── analysis.py          # 5 stage-5 tools (dsl_executor · statistical_suite · chart_planner · chart_renderer · evidence_registry)
 │   ├── schemas.py               # Pydantic models
 │   ├── dsl_validator.py         # whitelist / DSL — used by both understanding (build) and analyst (execute)
+│   ├── llm.py                   # single build_llm(cfg, agent_name) factory
 │   ├── logger.py                # structured logs to runs/<run_id>/logs/ — latency/tokens/cost + tool calls + retries
 │   └── utils.py                 # config load (config.yaml + env) + run_id allocator
 ├── resources/                  # read-only static assets
@@ -83,8 +93,8 @@ insight-forge/
 | `ingestion_agent.py` | 1 — Ingestion | Python: deep validation + read + sheet merge + profile + PII detection. LLM: business questions via HumanInputTool + interpretation | `validate_and_extract` · `profile_dataset` · `gather_business_context` | `file_validator_tool` (extension+MIME+signature) · `file_reader_tool` (chunked >5M rows) · `data_profiler_tool` · `pii_detector_tool` · `human_input_tool` | `data/extracted/` · `metadata/data_profile.json` · `knowledge/business_context.json` |
 | `understanding_agent.py` | 2 — Understanding**+ planning (2nd Task of the same Agent)** | Python: `nunique/head/kinds` + role rules. LLM: review roles (e.g. numeric `zip_code`→identifier), detect domain/entities, propose DSL KPIs | `classify_column_roles` · `detect_domain_and_entities` · `build_analysis_plan` | `column_profiler_tool` · `domain_classifier_tool` · `dsl_plan_builder_tool` (validated against `shared/dsl_validator.py` whitelist) | `metadata/understanding.json` · `metadata/analysis_plan.json` |
 | `data_quality.py` | 3 — Engine only, **no LLM** | Deterministic: schema, invalid values, missingness MCAR/MAR/MNAR, duplicates, referential integrity, business rules, units/encoding | plain functions invoked by `flows.py` (no CrewAI Task) | `schema_checker_tool` · `invalid_value_checker_tool` · `missingness_analyzer_tool` · `duplicate_detector_tool` · `referential_integrity_tool` · `deterministic_repair_tool` | `metadata/data_quality_report.json` |
-| `cleaning_agent.py` | 4 — Cleaning | LLM: strategy decision (JSON). Python: fillna, `*_missing_flag`, type cast, dedup, IQR, logging + DQ re-check | `decide_cleaning_strategy` · `execute_cleaning` · `recheck_data_quality` (max 3) | `cleaning_strategy_tool` · `fillna_tool` · `flag_column_tool` · `type_caster_tool` · `dedup_tool` · `iqr_outlier_tool` · `dq_recheck_tool` | `outputs/processed/cleaned_data.csv` (+`cleaned_data_attempt_<n>.csv`) · `metadata/cleaning_result.json` |
-| `analyst_agent.py` | 5 — Analysis | LLM: KPI selection, interpretation, chart re-rank. Python: DSL execution, stats suite, chart drawing, evidence registry | `select_kpis` · `run_dsl_and_stats` · `rank_chart_candidates` | `dsl_executor_tool` (whitelist via `shared/dsl_validator.py`) · `statistical_suite_tool` · `chart_planner_tool` · `chart_renderer_tool` · `evidence_registry_tool` | `outputs/kpis.json` · `statistical_results.json` · `charts/*.svg` · `metadata/chart_metadata.json` · `evidence_registry.json` |
+| `cleaning_agent.py` | 4 — Cleaning | LLM: strategy decision (JSON). Python: fillna, `*_missing_flag`, type cast, dedup, IQR, logging + DQ re-check | `decide_cleaning_strategy` · `execute_cleaning` · `recheck_data_quality` (max 3) | `cleaning_strategy_tool` · `fillna_tool` · `flag_column_tool` · `type_caster_tool` · `dedup_tool` · `iqr_outlier_tool` · `dq_recheck_tool` | `data/processed/cleaned_data.csv` (+`cleaned_data_attempt_<n>.csv`) · `metadata/cleaning_result.json` |
+| `analysis.py` | 5 — Analysis (5a compute + 5b charts, one agent) | LLM: KPI selection, interpretation, chart re-rank, **chart-kind proposals** (`proposed_kinds`). Python: DSL execution, stats suite, **kind validation + rule-table fallback**, SVG drawing, evidence registry | `select_kpis` · `run_dsl_and_stats` · `rank_chart_candidates` | `dsl_executor_tool` (whitelist via `shared/dsl_validator.py`) · `statistical_suite_tool` · `chart_planner_tool` (+ `validate_proposed_kinds`) · `chart_renderer_tool` (12-kind SVG) · `evidence_registry_tool` | `outputs/kpis.json` · `statistical_results.json` · `charts/*.svg` · `metadata/chart_metadata.json` · `evidence_registry.json` |
 | `insight_agent.py` | 6 — Insights | LLM-heavy: evidence-grounded insights + hedged recommendations + claim validation | `generate_insights` · `build_recommendations` · `validate_claims` | `evidence_lookup_tool` · `claim_validator_tool` · `human_input_tool` (if `review_required: true`) | `outputs/insights.json` |
 | `report_agent.py` | 7 — Report | Python renders full report from JSONs via template; LLM writes **only** 3–5 sentence executive summary | `render_report` · `write_executive_summary` | `html_renderer_tool` (jinja2 autoescape) · `html_sanitizer_tool` · `locale_formatter_tool` (babel) · `chart_embed_tool` | `<run_id>/report.html` · `metadata/report_result.json` |
 | `qa_agent.py` | 8 — QA | Python recomputes **100% of KPIs** (tolerance 0.01%), checks refs/charts/HTML. Independent LLM (different model) reviews logic + readability | `recompute_kpis` · `validate_structure` · `review_logic_and_readability` · `compute_verdict` (deterministic, no LLM) | `kpi_recomputation_tool` · `reference_validator_tool` · `score_calculator_tool` · `verdict_tool` | `metadata/qa_verdict.json` (APPROVED / APPROVED_WITH_WARNINGS / NEEDS_REVISION) |
@@ -95,7 +105,9 @@ insight-forge/
 
 | File/Dir | Contents |
 |---|---|
-| `chart_planner.py` | Ordered rule table (§2.5): dimension/n-point shape → chart kind (line/bar/barh/donut/histogram/scatter/heatmap) + `reason` + `reliability` (`low_n` on thin data). No fixed menu — rules only. |
+| `chart_planner.py` | Ordered rule table (§2.5) over a **12-kind whitelist**: dimension/n-point shape → chart kind (`line/bar/barh/donut/histogram/scatter/heatmap` + proposed `area/boxplot/stacked_bar/pie/lollipop`) + `reason` + `reliability` (`low_n` on thin data). `validate_proposed_kinds` accepts LLM proposals that pass whitelist + data-shape feasibility; rejected proposals fall back to the rule table. No fixed menu — rules + validated proposals only. |
+| `chart_renderer.py` | Hand-rolled SVG renderers (no matplotlib) — one pure function per kind; Okabe-Ito palette, value labels / line markers, XML-escaped caption (title + `reliability` + `evidence_id`) for alt text. |
+| `dsl_executor.py` | Whitelist DSL ops over ALL rows: `sum mean median count nunique min max std growth correlation ratio` + filters/group_by, every value evidence-minted. |
 | `evidence.py` | evidence-ids mint + evidence_registry read/write — **the only writer** of the registry. Every value/chart/insight passes through it. |
 | `generic/` | General computation: `descriptive` · `correlation` (Pearson + p-value + CI + effect) · `distribution` (histograms) · `trend` (rolling/seasonality). |
 | `domains/` | Per-domain KPI templates + validators (roadmap §7): `sales` · `finance` · `marketing` · `hr` · `operations`. Until filled, pipeline runs **generic-only**. |

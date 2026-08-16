@@ -12,9 +12,13 @@ re-opened read-only from the "Run" dropdown once the live run finishes.
 If the port is taken (e.g. another local service), the app scans the next
 10 ports and prints the URL it actually bound to.
 
-Stage 4+ are not implemented yet — they render as dimmed "Task N" cards
+Stages 7-8 are not implemented yet — they render as dimmed "Task N" cards
 and light up automatically once their agents land (they all write the same
 run.jsonl audit trail via RunLogger, so this viewer never changes).
+Stage 5 analysis artifacts include interactive SVG charts (hover to
+highlight — the SVG on disk stays deterministic; the JS is client-side).
+Stage 6 produces evidence-grounded insights + hedged recommendations
+(outputs/insights.json).
 """
 from __future__ import annotations
 
@@ -29,8 +33,11 @@ from pathlib import Path
 from typing import Any, Dict, List
 from urllib.parse import parse_qs, urlparse
 
+from agents.analysis import run_analysis
+from agents.cleaning_agent import run_cleaning
 from agents.data_quality import run_data_quality
 from agents.ingestion_agent import run_ingestion
+from agents.insight_agent import run_insights
 from agents.understanding_agent import run_understanding
 from shared.utils import load_config
 
@@ -47,11 +54,11 @@ STAGES: List[Dict[str, Any]] = [
     {"id": "data_quality", "num": 3, "name": "Data Quality",
      "implemented": True},
     {"id": "cleaning", "num": 4, "name": "Cleaning",
-     "implemented": False, "task": 5},
+     "implemented": True},
     {"id": "analysis", "num": 5, "name": "Analysis",
-     "implemented": False, "task": 7},
+     "implemented": True},
     {"id": "insights", "num": 6, "name": "Insights & Recommendations",
-     "implemented": False, "task": 8},
+     "implemented": True},
     {"id": "report", "num": 7, "name": "Report",
      "implemented": False, "task": 9},
     {"id": "qa", "num": 8, "name": "QA",
@@ -66,6 +73,11 @@ ARTIFACTS: Dict[str, List[str]] = {
                       "metadata/analysis_plan.json"],
     "data_quality": ["metadata/data_quality_report.json",
                      "metadata/repair_log.json"],
+    "cleaning": ["data/processed/cleaned_data.csv",
+                 "metadata/cleaning_result.json"],
+    "analysis": ["outputs/kpis.json", "outputs/statistical_results.json",
+                 "metadata/chart_metadata.json", "charts/"],
+    "insights": ["outputs/insights.json"],
 }
 
 _ANSWERS = iter(["Track revenue growth", "sales",
@@ -177,11 +189,31 @@ def _run_pipeline_impl(file_path: Path) -> None:
                     lambda: run_understanding(run_dir, cfg=cfg))
     else:
         STATE.set_stage("understanding", "skipped")
+    s3: Dict[str, Any] = {}
     if s2.get("status") == "passed":
-        _stage("data_quality",
-               lambda: run_data_quality(run_dir, cfg=cfg))
+        s3 = _stage("data_quality",
+                    lambda: run_data_quality(run_dir, cfg=cfg))
     else:
         STATE.set_stage("data_quality", "skipped")
+    # needs_repair is a NORMAL DQ outcome — Cleaning exists to fix it
+    s4: Dict[str, Any] = {}
+    if s3.get("status") in ("passed", "needs_repair"):
+        s4 = _stage("cleaning",
+                    lambda: run_cleaning(run_dir, cfg=cfg))
+    else:
+        STATE.set_stage("cleaning", "skipped")
+    s5: Dict[str, Any] = {}
+    if s4.get("status") == "passed":
+        s5 = _stage("analysis",
+                    lambda: run_analysis(run_dir, cfg=cfg))
+    else:
+        STATE.set_stage("analysis", "skipped")
+    s6: Dict[str, Any] = {}
+    if s5.get("status") == "passed":
+        s6 = _stage("insights",
+                    lambda: run_insights(run_dir, cfg=cfg))
+    else:
+        STATE.set_stage("insights", "skipped")
     STATE.set_busy(False)
 
 
@@ -363,6 +395,9 @@ class Handler(BaseHTTPRequestHandler):
                 files = sorted(p.name for p in target.iterdir())
                 return self._json({"dir": rel, "files": files})
             if target.is_file():
+                if target.suffix == ".svg":
+                    return self._json({"path": rel, "svg":
+                        target.read_text(encoding="utf-8")})
                 if target.suffix == ".json":
                     return self._json({"path": rel, "content":
                         json.loads(target.read_text(encoding="utf-8"))})

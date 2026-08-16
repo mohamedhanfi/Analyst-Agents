@@ -1,6 +1,6 @@
 # Insight Forge — Implementation Guide
 
-**Version:** 4.3.0 · **For:** Development Team · **Status:** Production-oriented (not production-ready — §7)
+**Version:** 4.4.0 · **For:** Development Team · **Status:** Production-oriented (not production-ready — §7)
 
 ---
 
@@ -277,8 +277,8 @@ Rule: **Repair never invents data.** It only casts types, drops exact duplicates
 
 | Who | Does |
 |-----|------|
-| LLM | select KPIs, interpret results, re-rank chart candidates (with reasons) |
-| Python | execute DSL (whitelist only), stats suite, **planner picks chart shape**, draw, evidence registry |
+| LLM | select KPIs, interpret results, re-rank chart candidates (with reasons), **propose chart kinds** (`area`, `boxplot`, …) with a justification |
+| Python | execute DSL (whitelist only), stats suite, **validate proposed kinds + pick the default chart shape**, draw, evidence registry |
 
 **Statistical suite**
 
@@ -330,9 +330,9 @@ Function signatures:
 
 `growth` semantic: `(current − baseline) / baseline`; if `over_column` alone → month-basis; for YoY use `period: "YoY"` (compares same calendar month/quarter vs prior year).
 
-**Charts — data-driven planner (not a fixed menu)**
+**Charts — data-driven planner (not a fixed menu) + LLM-proposed kinds (validated)**
 
-The chart type is **decided by the shape of the data**, not by habit. Python inspects each candidate visual at `analysis/chart_planner.py` and picks the form from an ordered rule table. The LLM only chooses *which facts deserve a chart* and may re-rank candidates with a justification; the shape itself is deterministic:
+The chart type is **decided by the shape of the data**, not by habit. Python inspects each candidate visual at `analysis/chart_planner.py` and picks the form from an ordered rule table. The LLM chooses *which facts deserve a chart*, may re-rank candidates with a justification, **and may propose a specific chart kind per KPI** — the shape stays Python's call:
 
 | # | Data shape (measured by Python) | Chart |
 |---|--------------------------------|-------|
@@ -346,6 +346,10 @@ The chart type is **decided by the shape of the data**, not by habit. Python ins
 | 8 | ≥ 3 numeric measures | ranked correlation heatmap |
 | 9 | share / "% of whole", parts ≈ 100% | doughnut (only then) |
 
+**Chart-kind whitelist (12).** Python renders only these kinds; anything else a model proposes is rejected. `bar · barh · line · doughnut · histogram · scatter · heatmap · area · boxplot · stacked_bar · pie · lollipop` (the last five extend the rule table — they exist only via LLM proposal or explicit plan intent, never by accident).
+
+**Hybrid proposal flow.** The LLM may submit `proposed_kinds: [{"kpi_id": "KPI-002", "kind": "boxplot", "reason": "…"}]` to `chart_planner_tool`. Python runs `validate_proposed_kinds`: (1) `kind` must be in the 12-kind whitelist; (2) the shape must fit the data — `line`/`area` need an ordered temporal axis with ≥ 3 points · `scatter` needs 2 numeric measures · `heatmap` ≥ 3 measures · `doughnut`/`pie` only for a share/"% of whole" KPI or a ≤ 2-value dimension · `histogram`/`boxplot` need a numeric measure · `stacked_bar` needs one dimension + ≥ 2 measures · `lollipop` needs a single dimension · unknown `kpi_id` rejected. Accepted proposals override the rule-table kind; rejected ones are **dropped with their reason and fall back to the rule table** — a bad proposal can never produce an unrenderable chart.
+
 Wiring is: **`chart_planner`** takes the KPI list + `data_profile` + numeric/ordinal columns → returns one JSON per chart:
 ```json
 {
@@ -355,7 +359,7 @@ Wiring is: **`chart_planner`** takes the KPI list + `data_profile` + numeric/ord
   "data": [...], "evidence_id": "EV-007", "computed_by": "pandas"
 }
 ```
-Falling back if the data is too thin: planner downgrades to a simple bar or a table, and stamps `reliability: "low_n"`. If the LLM re-ranks, the plan must carry the reason — the final draw is still Python. `chart_metadata.json` records the planner decision + the shape rule hit, so chart choice is reproducible (see §5).
+Falling back if the data is too thin: planner downgrades to a simple bar or a table, and stamps `reliability: "low_n"`. If the LLM re-ranks, the plan must carry the reason — the final draw is still Python. `chart_metadata.json` records the planner decision + the shape rule hit (or the accepted proposal), so chart choice is reproducible (see §5).
 
 **Input:** cleaned data · plan · understanding · business context · cleaning result
 **Output:** `runs/<run_id>/outputs/kpis.json`, `runs/<run_id>/outputs/statistical_results.json`, `runs/<run_id>/outputs/charts/*.svg`, `runs/<run_id>/metadata/chart_metadata.json` (planner + shape rules + evidence refs), `runs/<run_id>/outputs/evidence_registry.json`
@@ -368,14 +372,14 @@ Falling back if the data is too thin: planner downgrades to a simple bar or a ta
 |------|------|
 | `select_kpis` | picks which candidate KPIs from the plan are worth computing given the cleaned data |
 | `run_dsl_and_stats` | hands DSL ops + relevant statistical tests to Python for execution |
-| `rank_chart_candidates` | reviews `chart_planner` output, may re-rank with a written reason (shape/draw stays Python's call) |
+| `rank_chart_candidates` | reviews `chart_planner` output, may re-rank with a written reason and **propose chart kinds** (`proposed_kinds`, validated by Python) — shape/draw stays Python's call |
 
-**Tools used:** `dsl_executor_tool` (whitelist only, via `shared/dsl_validator.py`) · `statistical_suite_tool` (scipy/statsmodels) · `chart_planner_tool` (`analysis/chart_planner.py`) · `chart_renderer_tool` (matplotlib/seaborn) · `evidence_registry_tool` (`analysis/evidence.py` — the only writer)
+**Tools used:** `dsl_executor_tool` (whitelist only, via `shared/dsl_validator.py`) · `statistical_suite_tool` (scipy/statsmodels) · `chart_planner_tool` (`analysis/chart_planner.py` — deterministic rule table + `validate_proposed_kinds` for LLM proposals) · `chart_renderer_tool` (`analysis/chart_renderer.py` — hand-rolled SVG, deterministic, no plotting library) · `evidence_registry_tool` (`analysis/evidence.py` — the only writer)
 
 **Chart accessibility:**
-- **Color-blind safe palettes** — use `seaborn` colorblind / Okabe-Ito; never red-green as the only encoding.
-- **Pattern + label redundancies** — bar/pie also label values; line charts get markers, not color-only.
-- **Alt text** — each `<img>` in the HTML report carries a caption generated from chart metadata + associated insights.
+- **Color-blind safe palettes** — Okabe-Ito / seaborn colorblind; never red-green as the only encoding.
+- **Pattern + label redundancies** — bar/pie/doughnut also label values; line/area charts get markers, not color-only.
+- **Alt text** — each `<img>` in the HTML report carries a caption generated from chart metadata + associated insights (title + `reliability` + `evidence_id`).
 
 **Localization:**
 - All numeric/datetime formatting follows the report's `locale` (from business context; default `en`): decimal separators and date formats (`en-US` → `1,234.5`, `ar-EG` → `١٬٢٣٤٫٥`).
@@ -537,6 +541,23 @@ If business questions time out → Generic Mode with `context_confidence: 0`, re
 > 6. §6 golden datasets — the single `Expected: revenue=10,000...` line read as if it applied to all 8 fixtures; replaced with a per-fixture table so each fixture's assertion is unambiguous.
 > 7. §1 `Max chart count` — added the truncation rule for when candidates exceed 20.
 > 8. §2.4 Cleaning output — re-run attempts are now versioned (`cleaned_data_attempt_<n>.csv`) instead of silently overwritten, so lineage (§3.3) holds even when Cleaning takes multiple tries.
+>
+> **v4.4 — chart kinds + hybrid proposal (Stage 5b):**
+> 9. §2.5 chart-kind whitelist extended to **12 kinds** (`area · boxplot · stacked_bar · pie · lollipop` added to the original 7); every kind has a deterministic hand-rolled SVG renderer in `analysis/chart_renderer.py` (no matplotlib dependency).
+> 10. §2.5 hybrid proposal flow — the LLM may **propose chart kinds with reasons** (`proposed_kinds`); Python validates them (`validate_proposed_kinds`: whitelist + data-shape feasibility); rejected proposals fall back to the rule table with the reason recorded. Final draw is always Python.
+> 11. §2.5 Stage 5b delivered inside `agents/analysis.py` (same agent as 5a — no separate `analyst_agent.py`); `chart_renderer_tool` (SVG preview) + `evidence_registry_tool` (registry write, only writer).
+>
+> **v4.5 — Stage 5b implemented (Task 7, 2026-08-16):**
+> 12. `analysis/chart_renderer.py` ships the 12 hand-rolled SVG renderers (Okabe-Ito palette, value labels, XML-escaped, `<title>/<desc>` captions with evidence_id; Freedman–Diaconis bins; corr heatmap; trend-line scatter); `render_all` writes `runs/<run_id>/charts/<chart_id>.svg` and never raises on a single bad chart.
+> 13. `ChartMetadata.kpi_id` links each chart to its base KPI candidate (shape-driven extras leave it null); the renderer recomputes series deterministically from **all rows** via new public `dsl_executor` wrappers (`growth_series`/`grouped_values`/`grouped_growth_values`) — grouped KPIs are stored expanded as scalars in `kpis.json`, so charts draw from the operation, never from a dict value.
+> 14. `_rule_2_growth` now plans on the **actual period series** (≥3 points from `growth_series`) instead of the raw date cardinality — a YoY chart over a 10-day sample is no longer planned at all (was a dead "no data" SVG).
+> 15. `chart_planner_tool` accepts `proposals_json` and returns `proposal_errors`; `chart_path` is filled into `chart_metadata.json` by the agent after `render_all`. Verified end-to-end on a dirty 14-row chain: 8 KPIs · 38 tests · 6 real SVGs · 52 evidence entries.
+>
+> **v4.6 — Stage 6 implemented (Task 8, 2026-08-16):**
+> 16. `agents/insight_agent.py` ships the deterministic §2.6 claim pipeline: DESCRIPTIVE from computed KPIs · CORRELATIONAL gated on |r| ≥ 0.3 **and** p < 0.05 (CI quoted, "association, not cause") · COMPARATIVE gated on p < 0.05 (chi²/Cramér's V deduped per pair) · trend claims require ≥ 3 periods and are labeled "not a forecast" · PREDICTIVE/CAUSAL are never emitted.
+> 17. Hedged recommendation chain per insight: Observation → Finding → Implication → "consider testing…" (bounded at 8). Every claim is validated before saving by `claim_validator_tool` (evidence refs exist · claim type matches evidence kinds derived from stage-5 artifacts · recommendations reference surviving insights) — failures are removed and logged.
+> 18. `--crew` refines titles/descriptions only (ids/evidence stay byte-identical, re-validated, deterministic fallback on failure); `--review` enables the §2.6 human gate (approve / edit / regenerate), auto-approved in automated mode (`config.yaml review_required: false`).
+> 19. Flow Review stage 6 is live: card lights up after analysis, `outputs/insights.json` previews in Artifacts with data-flow counts. Verified on `sales_demo.csv`: weak revenue×quantity correlation (r = −0.014) correctly gated out; significant product×category association kept.
 
 ```
 insight-forge/
