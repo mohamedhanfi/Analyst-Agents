@@ -1,7 +1,7 @@
 # STATE — حالة المشروع الإجمالية
 
-> آخر تحديث: أغسطس 2026 — بعد مراجعة شاملة في 09/08/2026
-> تقدير الاكتمال الكلي: **≈ 30%** (البنية التحتية جاهزة، أما الوكلاء والتحليل فلم يبدأوا بعد)
+> آخر تحديث: أغسطس 2026 — بعد إكمال المراحل 1–8 (Tasks 1–10)
+> تقدير الاكتمال الكلي: **≈ 85%** (8 مراحل جاهزة بالكامل، التكامل والتواصل فقط متبقي)
 
 ---
 
@@ -10,111 +10,62 @@
 | المنطقة | الحالة | النسبة |
 |---|---|---|
 | `shared/core/` (المنطق النقي) | ✅ مكتمل | 100% |
-| `shared/tools/` (أدوات CrewAI) | ✅ مكتمل | 100% |
+| `shared/tools/` (أدوات CrewAI) | ✅ مكتمل — 8 ملفات + `__init__` | 100% |
 | `shared/` (schemas · utils · logger) | ✅ مكتمل | 100% |
-| `shared/dsl_validator.py` | ⚠️ **فارغ (0 سطر) — يُنفَّذ مع المرحلة 2** | 0% |
-| الاختبارات الوحدوية | ✅ 32 اختبارًا مجتازًا | 100% |
-| `config.yaml` + `PROJECT_STRUCTURE.md` | ✅ محدَّث | 90% |
-| `agents/` (6 وكلاء) + `crew/` + `main.py` | ❌ ملفات فارغة (stubs) | 0% |
-| `analysis/` (إحصاءات · رسوم · مجالات) | ❌ ملفات فارغة (stubs) | 0% |
-| التقرير (`report_template.html`) | ⚠️ قالب فقط | 10% |
-| `cache/` (idempotency) + `runs/` | ✅ هيكل جاهز، لا منطق | 20% |
+| `agents/` (8 وكلاء) | ✅ مكتمل — كلها مُنفَّذة | 100% |
+| `analysis/` (إحصاءات · رسوم · تقرير · QA) | ✅ مكتمل | 100% |
+| `resources/report_template.html` | ✅ مُعاد كتابته كقالب Jinja2 | 100% |
+| الاختبارات الوحدوية | ✅ 487 اختبارًا مجتازًا | 100% |
+| `crew/flows.py` + `main.py` | ❌ لا يزالان فارغين (Task 11) | 0% |
 | اختبارات agent/e2e/integration | ❌ لم تبدأ | 0% |
-| **الإجمالي** | | **≈ 30%** |
+| **الإجمالي** | | **≈ 85%** |
 
 ---
 
 ## ✅ ما تم تنفيذه فعليًا (مكتمل)
 
-### طبقة `shared/` — البنية التحتية (100%)
-```
-shared/
-├── core/                    # منطق نقي، بدون CrewAI — قابل للاختبار بالكامل
-│   ├── validation.py        # FileValidator: امتداد ← حجم ← توقيع ← تحليل ← صفوف
-│   ├── reader.py            # FileReader: اكتشاف CSV/XLSX + استخراج الأوراق (تدفقي)
-│   ├── profiler.py          # DataProfiler: ملف كامل + نموذج 100 صف (PII مخفي) + data_profile.json
-│   ├── pii.py               # PiiDetector: قواعد بدون LLM (أسماء أعمدة + أنماط قيم)
-│   └── business_context.py  # حوار أسئلة الأعمال + Generic Mode عند المهلة
-├── tools/                   # أغلفة رفيعة فوق core/ — مجمَّعة في __init__.py
-│   ├── file_io.py           # file_validator_tool · file_reader_tool · file_sheet_extract_tool
-│   ├── profiling.py         # pii_detector_tool · data_profiler_tool
-│   └── human.py             # human_input_tool
-├── schemas.py               # نماذج Pydantic لكل المخرجات
-├── dsl_validator.py         # ⚠️ فارغ — القائمة البيضاء / DSL (مع المرحلة 2)
-├── logger.py                # سجلات منظمة لكل run
-└── utils.py                 # config + run_id + حساب SHA
-```
+### المراحل 1–8 — جميعها مُنفَّذة ومُختبَرة
 
-**مبادئ ثابتة وأُنجزت:** golden rule (الـ LLM يقرر، Python ينفذ) · حجم الملف يُحسب من القرص · لا ثقة بالمدخلات · PII يُخفى من كل العينات · الأعمدة الرقمية/الزمنية ليست PII.
+| # | المرحلة | الملفات | الحالة |
+|---|---------|---------|--------|
+| 1 | **Ingestion** | `agents/ingestion_agent.py` + `shared/tools/file_io.py` + `shared/tools/profiling.py` + `shared/tools/human.py` | ✅ مكتمل |
+| 2 | **Understanding** | `agents/understanding_agent.py` + `shared/core/understanding.py` + `shared/tools/understanding.py` + `shared/dsl_validator.py` | ✅ مكتمل |
+| 3 | **Data Quality** | `agents/data_quality.py` + `shared/core/data_quality.py` + `shared/tools/data_quality.py` | ✅ مكتمل |
+| 4 | **Cleaning** | `agents/cleaning_agent.py` + `shared/core/cleaning.py` + `shared/tools/cleaning.py` | ✅ مكتمل |
+| 5a | **Analysis (compute)** | `agents/analysis.py` + `analysis/dsl_executor.py` + `analysis/generic/` + `analysis/evidence.py` | ✅ مكتمل |
+| 5b | **Analysis (charts)** | `analysis/chart_planner.py` + `analysis/chart_renderer.py` | ✅ مكتمل |
+| 6 | **Insights** | `agents/insight_agent.py` + `shared/tools/insights.py` | ✅ مكتمل |
+| 7 | **Report** | `agents/report_agent.py` + `analysis/report_builder.py` + `resources/report_template.html` + `shared/tools/report.py` | ✅ مكتمل |
+| 8 | **QA** | `agents/qa_agent.py` + `analysis/qa_recompute.py` + `analysis/qa_verdict.py` + `shared/tools/qa.py` | ✅ مكتمل |
 
-### الاختبارات — ✅ 32 مجتازًا (الأرقام الفعلية بعد المراجعة)
-`test_file_validator` (10) · `test_reader` (7) · `test_pii` (6) · `test_business_context` (5) · `test_profiler` (4)
-> لا يوجد `test_dsl_validator` — الـ DSL غير مطبَّق بعد.
+### تشغيل E2E كامل على `sales_demo.csv`
+- **run_20260817_235726_1**: 8 مراحل نجحت بالترتيب
+- QA verdict: `APPROVED_WITH_WARNINGS` (score 97.5, تحذير واحد فقط)
+- Report rendered: كل الأقسام سليمة (exec summary + masthead + KPIs + stats + charts + insights + recommendations + evidence)
+- **487 اختبارًا مجتازًا، 0 أخطاء**
 
 ---
 
-## ⚠️ ما لم يُنفَّذ بعد (الباقي في المشروع ككل)
+## ⚠️ ما لم يُنفَّذ بعد (المتبقي)
 
-### أ. الوكلاء — 0% (كلها stubs فارغة)
-| الوكيل | المرحلة | المطلوب تنفيذه |
-|---|---|---|
-| `ingestion_agent.py` | 1 — الاستقبال | تحقق ← قراءة ← أسئلة أعمال ← ملف البيانات → `metadata/` + `knowledge/` |
-| `understanding_agent.py` | 2 — الفهم | أدوار الأعمدة + كشف المجال/الكيانات + خطة تحليل DSL |
-| `cleaning_agent.py` | 3 — التنظيف | معالجة القيم الناقصة/الشاذة/المكررة + مخرجات تنظيف موثقة |
-| `analyst_agent.py` | 5 — التحليل | تنفيذ DSL + إحصاءات + ترتيب الرسوم + سجل أدلة |
-| `insight_agent.py` | 6 — الرؤى | رؤى مبنية على أدلة + توصيات + تحقق من الادعاءات |
-| `report_agent.py` | 7 — التقرير | توليد تقرير HTML نهائي بمستوى ثقة |
+### أ. التكامل — Task 11 (المهمة التالية)
+| الملف | المطلوب |
+|---|---|
+| `crew/crew.py` | ربط كل الوكلاء بترتيب Pipeline |
+| `crew/flows.py` | DQ gate · cleaning recheck loop · QA verdict branching |
+| `main.py` | نقطة الدخول: `python main.py <file>` → run كامل |
 
-### ب. أدوات المراحـل الأخرى — 0%
-`column_profiler_tool` · `domain_classifier_tool` · `dsl_plan_builder_tool` · `dsl_executor_tool` · `statistical_suite_tool` (correlation/distribution/trend في `analysis/generic/`) · `chart_planner_tool` · `chart_renderer_tool` · `evidence_registry_tool` · `claim_validator_tool`
-
-### ج. حلقات التشغيل — 0%
-`crew/crew.py` + `crew/flows.py` + `main.py` (نقطة الدخول) + `runs/` isolation + `cache/` idempotency + الربط بـ `logger.py`
-
-### د. الباقي
-- `analysis/evidence.py` + `chart_planner.py` (فارغان)
-- قوالب `analysis/domains/` (sales · finance · marketing · hr · operations) — خطة مستقبلية
-- `report_template.html` (قالب فقط)
-- اختبارات agent/integration/e2e/golden + تجربة Fixtures حقيقية
-- ❗ **Commit** التغييرات الحالية (كلها في working tree بدون commit)
-
----
-
-## 🔍 نتائج مراجعة 09/08/2026
-
-### أُصلح خلال المراجعة (كلها في working tree، لم تُرتكب بعد)
-1. `shared/logger.py` — كان يستخدم `os.PathLike` بدون `import os` → أضيف الاستيراد
-2. أدوات فحص الملفات كانت تفشل بدون مفتاح LLM → `load_config(require_key=False)` لأدوات الحساب الخالص
-3. `pyproject.toml` كان يستبعد `shared.core` و `shared.tools` من الحزمة → أُدرجا ضمن `packages`
-4. عدّ صفوف XLSX في `FileValidator` كان عبر `max_row` غير الموثوق → عدّ صريح مطابق لـ `FileReader`
-
-### ملاحظات مؤجلة عمدًا (سجّل للتنفيذ لاحقًا)
-- `shared/dsl_validator.py` فارغ تمامًا (0 سطر) — يُنفَّذ مع المرحلة 2 (أدوات الفهم)
-- `business_context._recompute_deadline` دالة لا تفعل شيئًا (تعيد نفس القيمة) — تنظيف اختياري
-- قراءة >5M سطر (تقطيع chunked) غير مطبَّقة بعد — الحدود معرّفة في `config.yaml` فقط
-- `schemas.py` يغطي المراحل 1–4 فقط — نماذج المراحل 5–6 (KPIs · إحصاءات · رؤى · توصيات · تقرير) تُضاف مع وكلائها
-- حساب SHA للملف مكرر داخل `FileReader._calculate_hash` ولا حاجة لدالة عامة في `utils` — ترك كما هو عمدًا
-
----
-
-## 🧭 اقتراحات للخطوات القادمة (بالترتيب المقترح)
-
-| الأولوية | الخطوة | لماذا أولًا؟ |
-|---|---|---|
-| 1 | `agents/ingestion_agent.py` → `agents/understanding_agent.py` | يكملان المرحلتين 1+2 باستخدام `shared/` الجاهز تمامًا — أول تشغيلة حقيقية |
-| 2 | أدوات المرحلتين (column/domain/dsl tools) | لا بديل عنها وقابلة للاختبار الوحدوي فورًا |
-| 3 | `main.py` + `crew/flows.py` | يربط كل شيء في مسار واحد قابل للتشغيل |
-| 4 | `cleaning_agent.py` | يعتمد على فهم المرحلتين السابقتين |
-| 5 | `analysis/` + `dsl_executor` + `evidence_registry` | قلب التحليل وتتبُّع الأدلة (المرحلة 5) |
-| 6 | `insight_agent.py` + `report_agent.py` | إغلاق الدورة بتقرير نهائي |
-| 7 | Commit أولي + اختبارات agent/e2e | تثبيت التقدم وتغطية التشغيل الفعلي |
-
-> **توصية عاجلة:** عمل commit للتغييرات الحالية قبل بدء الوكلاء — حتى نقر في العودة لأي تقدم.
+### ب. اختبارات إضافية — Task 12
+- `tests/agent/` — LLM JSON validity + plan viability
+- `tests/integration/` — inter-stage handoffs
+- `tests/e2e/` — full pipeline on golden datasets
+- `tests/golden/` — precomputed truth per fixture
 
 ---
 
 ## 🗂️ مراجع
-- `Project_Plan/PROJECT_STRUCTURE.md` — البنية الكاملة
-- `Project_Plan/PROJECT_PLAN.md` — الخطة والمنهجية (المرجعية الأصلية)
+- `Project_Plan/Analyst-Agents.md` — المواصفة الكاملة (v4.4)
+- `Project_Plan/PROJECT_STRUCTURE.md` — البنية التفصيلية
+- `Project_Plan/DAILY_TASKS.md` — مُتتبِّع المهام (12 مهمة)
 - `config.yaml` — الحدود والإعدادات
-- `tests/unit/` — الاختبارات الحالية
+- `tests/unit/` — 487 اختبارًا وحدويًا

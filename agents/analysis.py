@@ -28,6 +28,7 @@ from analysis.chart_renderer import render_all
 from analysis.dsl_executor import execute_plan
 from analysis.evidence import EvidenceRegistry
 from analysis.generic import run_statistical_suite
+from shared.formatting import parse_json as _parse_json
 from shared.llm import build_llm
 from shared.logger import RunLogger
 from shared.schemas import (AnalysisPlan, ChartMetadata, CleaningResult,
@@ -374,19 +375,8 @@ def _find_cleaned_csv(run_dir: Path) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
-# JSON parsing + CLI
+# CLI
 # ---------------------------------------------------------------------------
-
-def _parse_json(raw: str) -> Any:
-    start = raw.find("{") if "{" in raw else -1
-    end = raw.rfind("}")
-    try:
-        if start == -1 or end <= start:
-            return json.loads(raw.strip()) if raw.strip() else None
-        return json.loads(raw[start:end + 1])
-    except (json.JSONDecodeError, TypeError):
-        return None
-
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(

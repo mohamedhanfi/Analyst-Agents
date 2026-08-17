@@ -69,9 +69,6 @@ limits:
   max_run_seconds: 1800           # hard stop → reason run_time_limit_exceeded
   chunk_size: 50000               # pandas read_csv chunksize for >5M rows
 
-# Human review checkpoint (§2.6)
-review_required: false
-
 # Data retention & privacy (§5) — days per category; enforced by janitor job
 retention:
   raw_days: 7

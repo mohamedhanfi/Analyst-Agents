@@ -128,22 +128,17 @@ def chart_planner_tool(csv_path: str, understanding_json: str,
             proposals = json.loads(proposals_json)
         except json.JSONDecodeError:
             proposals = []
+    from analysis.chart_planner import validate_proposed_kinds
+    accepted, errors = validate_proposed_kinds(df, plan, understanding,
+                                               proposals)
     charts, truncated = plan_charts(df, plan, understanding, registry,
-                                    max_chart_count=max_chart_count,
-                                    thin_threshold=thin_threshold,
-                                    proposals=proposals)
+                                     max_chart_count=max_chart_count,
+                                     thin_threshold=thin_threshold,
+                                     proposals=proposals,
+                                     accepted_kinds=accepted)
     return _json({"charts": [c.model_dump() for c in charts],
                   "charts_truncated": truncated,
-                  "proposal_errors": _proposal_errors(
-                      df, plan, understanding, proposals)})
-
-
-def _proposal_errors(df: pd.DataFrame, plan: AnalysisPlan,
-                     understanding: DatasetUnderstanding,
-                     proposals: List[Dict[str, Any]]) -> List[str]:
-    from analysis.chart_planner import validate_proposed_kinds
-    _, errors = validate_proposed_kinds(df, plan, understanding, proposals)
-    return errors
+                  "proposal_errors": errors})
 
 
 @tool("chart_renderer_tool")

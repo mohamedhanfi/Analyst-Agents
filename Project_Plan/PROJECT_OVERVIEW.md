@@ -63,10 +63,10 @@ Flow: **Upload → 1 Ingestion → 2 Understanding → 3 Data Quality → 4 Clea
 | 2 | **Understanding** | Classifies each column's role (measure / dimension / temporal / identifier…), detects the domain (sales, hr…), builds the analysis plan (a whitelist of safe KPI formulas) | LLM + Python | [DONE] |
 | 3 | **Data Quality** | Deterministic checks: schema, invalid values (negative revenue, impossible dates…), missingness patterns (MCAR/MAR/MNAR), duplicates, referential integrity, business rules | Python only (no LLM) | [DONE] |
 | 4 | **Cleaning** | Fixes the data per strategy: fill median/mode, flag non-random missingness, cast types, drop duplicates / negatives, IQR outliers; re-checks quality (max 3 retries) | LLM (strategy) + Python (execute) | [DONE] |
-| 5 | **Analysis** | **5a – compute:** runs the whitelist KPIs, the statistical suite (descriptive, correlation, distribution, trend, comparison) and picks chart kinds from a data-shape rule table (12-kind whitelist); registers every value as evidence. **5b – draw:** renders the actual `*.svg` charts — the LLM may propose chart kinds with a reason, Python validates them (whitelist + data fit) and falls back to the rule table when rejected | LLM (select/rank/propose) + Python (validate/compute/draw) | 5a [DONE] · 5b [Task 7] |
-| 6 | **Insights** | Writes evidence-grounded insights and hedged recommendations; validates every claim against the evidence registry | LLM (text) + Python (validate) | [STUB, Task 8] |
-| 7 | **Report** | Renders the final HTML report (Python, from a template) and writes only the 3–5 sentence executive summary (LLM) | Python + LLM (summary only) | [STUB, Task 9] |
-| 8 | **QA** | Recomputes 100% of the KPIs independently, validates structure, and issues the final verdict deterministically | Python (authoritative) + LLM (review) | [STUB, Task 10] |
+| 5 | **Analysis** | **5a – compute:** runs the whitelist KPIs, the statistical suite (descriptive, correlation, distribution, trend, comparison) and picks chart kinds from a data-shape rule table (12-kind whitelist); registers every value as evidence. **5b – draw:** renders the actual `*.svg` charts — the LLM may propose chart kinds with a reason, Python validates them (whitelist + data fit) and falls back to the rule table when rejected | LLM (select/rank/propose) + Python (validate/compute/draw) | [DONE] |
+| 6 | **Insights** | Writes evidence-grounded insights and hedged recommendations; validates every claim against the evidence registry | LLM (text) + Python (validate) | [DONE] |
+| 7 | **Report** | Renders the final HTML report (Python, Jinja2 template) and writes only the 3–5 sentence executive summary (LLM) | Python + LLM (summary only) | [DONE] |
+| 8 | **QA** | Recomputes 100% of the KPIs independently, validates structure, scores issues, and issues the final verdict deterministically | Python (authoritative) + LLM (review) | [DONE] |
 
 Notes:
 - Stages 3 is a **pure Python gate** inside the flow — not an LLM agent.
@@ -165,16 +165,19 @@ Insight Forge
 │   ├── understanding_agent.py     # [DONE] stage 2
 │   ├── data_quality.py            # [DONE] stage 3 (pure Python, no LLM)
 │   ├── cleaning_agent.py          # [DONE] stage 4
-│   ├── analysis.py                # [DONE] stage 5a (compute + crew runner) · 5b (charts) [Task 7]
-│   ├── insight_agent.py           # [STUB] stage 6 (Task 8) — empty
-│   ├── report_agent.py            # [STUB] stage 7 (Task 9) — empty
-│   └── qa_agent.py                # [STUB] stage 8 (Task 10) — empty
+│   ├── analysis.py                # [DONE] stage 5 (compute + charts + crew runner)
+│   ├── insight_agent.py           # [DONE] stage 6
+│   ├── report_agent.py            # [DONE] stage 7
+│   └── qa_agent.py                # [DONE] stage 8
 │
-├── analysis/                      # [DONE] pure math, no LLM (used by stage 5a)
+├── analysis/                      # pure math, no LLM
 │   ├── evidence.py                # evidence ids + evidence_registry.json (the only writer)
 │   ├── dsl_executor.py            # runs the whitelist KPI formulas
 │   ├── chart_planner.py           # 12-kind whitelist + rule table + proposal validation
-│   ├── chart_renderer.py          # [Task 7] hand-rolled SVG renderers (12 kinds)
+│   ├── chart_renderer.py          # [DONE] hand-rolled SVG renderers (12 kinds)
+│   ├── report_builder.py          # [DONE] Jinja2 report rendering + 9 section renderers
+│   ├── qa_recompute.py            # [DONE] KPI recomputation + reference validation
+│   ├── qa_verdict.py              # [DONE] score formula + deterministic verdict
 │   ├── generic/                   # statistical suite: descriptive, correlation,
 │   │                              #   distribution, trend, comparison
 │   └── domains/                   # [PLACEHOLDER] future domain KPIs
@@ -197,7 +200,9 @@ Insight Forge
 │   │   ├── understanding.py       #   column_profiler / domain_classifier / dsl_plan_builder
 │   │   ├── data_quality.py        #   7 stage-3 check/repair tools
 │   │   ├── cleaning.py            #   7 stage-4 cleaning tools
-│   │   └── analysis.py            #   5 stage-5 tools (dsl_executor / statistical_suite / chart_planner / chart_renderer / evidence_registry)
+│   │   ├── analysis.py            #   5 stage-5 tools (dsl_executor / statistical_suite / chart_planner / chart_renderer / evidence_registry)
+│   │   ├── report.py             #   4 stage-7 tools (load_report_artifacts / render_section / render_full / save_report)
+│   │   └── qa.py                 #   3 stage-8 tools (review_logic / score_calculator / verdict)
 │   ├── schemas.py                 # Pydantic contracts for every artifact
 │   ├── dsl_validator.py           # KPI whitelist rules
 │   ├── llm.py                     # one LLM factory (used by all agents)
@@ -205,13 +210,13 @@ Insight Forge
 │   └── utils.py                   # config loading, run_id allocation
 │
 ├── resources/
-│   └── report_template.html       # HTML template for stage 7 (exists, wired in Task 9)
+│   └── report_template.html       # [DONE] Jinja2 HTML template for stage 7
 │
 ├── runs/                          # one folder per run (gitignored)
 ├── cache/                         # [PLACEHOLDER] idempotency cache (Task 11)
 │
 ├── tests/
-│   ├── unit/                      # [DONE] 34 files, 375 tests passing
+│   ├── unit/                      # [DONE] 34 files, 487 tests passing
 │   ├── Flow_review/               # [DONE] live web viewer (app.py) for the pipeline
 │   └── agent, integration, e2e, golden, fixtures, statistical, regression, security
 │                                  # [EMPTY] future test suites (Task 12)
@@ -228,7 +233,7 @@ Insight Forge
 
 ## 6. What is done vs what is remaining
 
-### Done (Tasks 1–6) — green baseline
+### Done (Tasks 1–10) — all 8 stages green, E2E verified
 
 | Task | Area | What exists |
 |------|------|-------------|
@@ -238,30 +243,25 @@ Insight Forge
 | 4 | Stage 3 Data Quality | full check suite + deterministic repair (pure Python) |
 | 5 | Stage 4 Cleaning | strategy table, executor, versioned attempts, recheck cap |
 | 6 | Stage 5a Analysis | evidence registry, DSL executor, statistical suite, chart planner, 3 tools, `agents/analysis.py` |
+| 7 | Stage 5b Charts | hand-rolled SVG renderer (12 kinds), hybrid proposal validation, `chart_renderer_tool` + `evidence_registry_tool` |
+| 8 | Stage 6 Insights | evidence-grounded taxonomy, hedged recommendations, claim validator, `--review` gate |
+| 9 | Stage 7 Report | Jinja2 template rendering, 9 section renderers, LLM exec summary, masthead from business context |
+| 10 | Stage 8 QA | KPI recomputation, reference validation, score formula, deterministic verdict |
 
-**Tests: 375 passing** in `tests/unit/`. Each stage is live-verified on
-`runs/demo_crew` — both the deterministic path and the real CrewAI (`--crew`)
-path produce identical artifacts (6 KPIs · 16 statistical tests · 4 charts ·
-26 evidence entries).
+**Tests: 487 passing** in `tests/unit/`. Full E2E verified on `sales_demo.csv`
+(run `run_20260817_235726_1`): all 8 stages passed, QA verdict
+`APPROVED_WITH_WARNINGS` (score 97.5, 1 valid warning), report renders correctly.
 
-### Remaining (Tasks 7–12)
+### Remaining (Tasks 11–12)
 
 | Task | Area | What's left |
 |------|------|-------------|
-| 7 | Stage 5b Charts | render real `*.svg` files — `analysis/chart_renderer.py` (12-kind whitelist), hybrid `validate_proposed_kinds`, `chart_renderer_tool` + `evidence_registry_tool`, `chart_path` in `chart_metadata.json` |
-| 8 | Stage 6 Insights | evidence-grounded insights + recommendations + claim validator |
-| 9 | Stage 7 Report | HTML report from the template + executive summary |
-| 10 | Stage 8 QA | independent recomputation + final verdict (`agents.qa.model` is still a TODO) |
-| 11 | Orchestration | `crew/crew.py`, `crew/flows.py`, `main.py` — wire all stages end-to-end |
+| 11 | Orchestration | `crew/crew.py`, `crew/flows.py`, `main.py` — wire all stages end-to-end with DQ gate + QA verdict branching |
 | 12 | Tests & golden datasets | integration / e2e / security / golden fixtures |
 
 Notes:
-- The agent files for tasks 7–10 and the whole `crew/` + `main.py` exist as
-  **empty stubs** — the placeholders are in place, the logic is not.
-- **Latest commits:** Task 5 (Stage 4 Cleaning) `944b13e`, Task 6 (Stage 5a
-  Analysis) `2e02c88` — pulled into the working tree.
-- The report template (`resources/report_template.html`) already exists and
-  will be used by Task 9.
+- `crew/` and `main.py` are **empty stubs** — the pipeline currently runs stage-by-stage via CLI commands, not as one `python main.py <file>` invocation.
+- **config.yaml** `agents.qa.model` still shares the same model as generation agents — should be distinct per spec §2.8.
 
 ---
 

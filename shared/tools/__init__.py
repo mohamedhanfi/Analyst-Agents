@@ -43,6 +43,17 @@ from shared.tools.insights import (
     claim_validator_tool,
     evidence_lookup_tool,
 )
+from shared.tools.report import (
+    load_report_artifacts_tool,
+    render_full_report_tool,
+    render_report_section_tool,
+    save_report_tool,
+)
+from shared.tools.qa import (
+    review_logic_tool,
+    score_calculator_tool,
+    verdict_tool,
+)
 
 __all__ = [
     "file_validator_tool",
@@ -75,4 +86,11 @@ __all__ = [
     "evidence_registry_tool",
     "evidence_lookup_tool",
     "claim_validator_tool",
+    "load_report_artifacts_tool",
+    "render_report_section_tool",
+    "render_full_report_tool",
+    "save_report_tool",
+    "review_logic_tool",
+    "score_calculator_tool",
+    "verdict_tool",
 ]

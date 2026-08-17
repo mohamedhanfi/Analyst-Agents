@@ -30,6 +30,9 @@ insight-forge/
 │   ├── chart_renderer.py       # hand-rolled SVG renderers (Okabe-Ito, labels, captions) — one per kind
 │   ├── dsl_executor.py         # whitelist DSL ops over ALL rows (filters, group_by, growth, correlation)
 │   ├── evidence.py             # evidence_id minting + registry read/write (the only writer)
+│   ├── report_builder.py       # Jinja2 report rendering: load_artifacts + 9 section renderers + render_report
+│   ├── qa_recompute.py         # KPI recomputation from cleaned CSV + reference validation
+│   ├── qa_verdict.py           # score formula (§2.8) + deterministic verdict table
 │   ├── generic/                # descriptive · correlation · distribution · trend · comparison
 │   └── domains/                # sales · finance · marketing · hr · operations
 ├── shared/
@@ -49,7 +52,9 @@ insight-forge/
 │   │   ├── understanding.py     # column_profiler · domain_classifier · dsl_plan_builder
 │   │   ├── data_quality.py      # 6+1 stage-3 check tools
 │   │   ├── cleaning.py          # 7 stage-4 tools
-│   │   └── analysis.py          # 5 stage-5 tools (dsl_executor · statistical_suite · chart_planner · chart_renderer · evidence_registry)
+│   │   ├── analysis.py          # 5 stage-5 tools (dsl_executor · statistical_suite · chart_planner · chart_renderer · evidence_registry)
+│   │   ├── report.py            # 4 stage-7 tools (load_report_artifacts · render_section · render_full · save_report)
+│   │   └── qa.py                # 3 stage-8 tools (review_logic · score_calculator · verdict)
 │   ├── schemas.py               # Pydantic models
 │   ├── dsl_validator.py         # whitelist / DSL — used by both understanding (build) and analyst (execute)
 │   ├── llm.py                   # single build_llm(cfg, agent_name) factory

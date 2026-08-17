@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/framework-CrewAI-blue" alt="framework">
-  <img src="https://img.shields.io/badge/spec%20version-4.3.0-lightgrey" alt="spec version">
+  <img src="https://img.shields.io/badge/spec%20version-4.4.0-lightgrey" alt="spec version">
 </p>
 
 <h1 align="center">Insight Forge</h1>
@@ -74,16 +74,67 @@ Full mission/input/output/tasks/tools per agent → [Agents in depth](#agents-in
 
 ```
 insight-forge/
-├── main.py            # entry point — builds Crew, runs Flow
-├── config.yaml         # per-agent config, hard limits, retention
-├── crew/                # CrewAI Agents/Tasks (crew.py) + branching Flow (flows.py)
-├── agents/              # one module per pipeline stage (8 total)
-├── analysis/            # deterministic compute: chart_planner, evidence registry, domain modules
-├── shared/               # tools, schemas, DSL validator, logger, utils
-├── resources/            # report template + static business-context templates
-├── runs/                 # per-run isolated output (data, metadata, outputs, logs)
-├── cache/                 # idempotency + run-comparison indexes
-└── tests/                 # unit/integration/statistical/security/agent/e2e/golden
+├── main.py                     # entry point — builds Crew, runs Flow (Task 11)
+├── config.yaml                 # per-agent config, hard limits, retention
+├── .env.example                # API keys sample (never committed)
+├── pyproject.toml              # dependencies
+├── crew/
+│   ├── crew.py                 # CrewAI Agents + Tasks in order (Task 11)
+│   └── flows.py                # DQ gate, Cleaning re-check, QA verdict branches (Task 11)
+├── agents/                     # one module per pipeline stage, all 8 stages together
+│   ├── ingestion_agent.py      # stage 1
+│   ├── understanding_agent.py  # stage 2 — roles + domain + DSL plan
+│   ├── data_quality.py         # stage 3 — Engine only, no LLM
+│   ├── cleaning_agent.py       # stage 4
+│   ├── analysis.py             # stage 5 — compute (5a) + charts rendering (5b)
+│   ├── insight_agent.py        # stage 6
+│   ├── report_agent.py         # stage 7
+│   └── qa_agent.py             # stage 8
+├── analysis/                   # pure computation, no LLM
+│   ├── chart_planner.py        # 12-kind whitelist + data-shape rule table
+│   ├── chart_renderer.py       # hand-rolled SVG renderers (Okabe-Ito, labels, captions)
+│   ├── dsl_executor.py         # whitelist DSL ops over ALL rows
+│   ├── evidence.py             # evidence_id minting + registry (the only writer)
+│   ├── report_builder.py       # Jinja2 report rendering + 9 section renderers
+│   ├── qa_recompute.py         # KPI recomputation from cleaned CSV + reference validation
+│   ├── qa_verdict.py           # score formula + deterministic verdict table
+│   ├── generic/                # descriptive · correlation · distribution · trend · comparison
+│   └── domains/                # sales · finance · marketing · hr · operations (placeholder)
+├── shared/
+│   ├── core/                    # pure logic, no CrewAI — the unit-testable layer
+│   │   ├── validation.py        # FileValidator (ext/MIME/signature/parse/rows)
+│   │   ├── reader.py            # FileReader (discovery + extract_sheet, streamed)
+│   │   ├── profiler.py          # DataProfiler (profile + samples, PII-redacted)
+│   │   ├── pii.py               # PiiDetector (rule-based, no LLM)
+│   │   ├── business_context.py  # BusinessContextGatherer (dialog + generic mode)
+│   │   ├── understanding.py     # role rules §2.2 + domain facts + DSL plan builder
+│   │   ├── data_quality.py      # §2.3 checks + deterministic repair
+│   │   └── cleaning.py          # §2.4 strategy table + execution
+│   ├── tools/                   # CrewAI @tool wrappers, aggregated in __init__.py
+│   │   ├── file_io.py           # file_validator · file_reader · file_sheet_extract
+│   │   ├── profiling.py         # pii_detector · data_profiler
+│   │   ├── human.py             # human_input
+│   │   ├── understanding.py     # column_profiler · domain_classifier · dsl_plan_builder
+│   │   ├── data_quality.py      # 6+1 stage-3 check tools
+│   │   ├── cleaning.py          # 7 stage-4 tools
+│   │   ├── analysis.py          # 5 stage-5 tools
+│   │   ├── report.py            # 4 stage-7 tools
+│   │   └── qa.py                # 3 stage-8 tools
+│   ├── schemas.py               # Pydantic models for every artifact
+│   ├── dsl_validator.py         # DSL whitelist
+│   ├── llm.py                   # single build_llm(cfg, agent_name) factory
+│   ├── logger.py                # structured per-stage logs → runs/<run_id>/logs/
+│   └── utils.py                 # config load, run_id allocator
+├── resources/
+│   ├── report_template.html     # Jinja2 HTML report template
+│   └── business_context/        # static business-context templates
+├── runs/                        # run isolation — per-run output (gitignored)
+│   └── <run_id>/                # data/ · knowledge/ · metadata/ · outputs/ · logs/ · report.html
+├── cache/                       # key→run_id index (idempotency)
+└── tests/
+    ├── unit/                    # 487 tests passing
+    ├── Flow_review/             # live web viewer (app.py) for the pipeline
+    └── fixtures/                # test templates (report_minimal.html, etc.)
 ```
 
 Fully annotated tree → [Full repository tree](#full-repository-tree) below.
@@ -123,7 +174,7 @@ Full test suite breakdown → [Full testing reference](#full-testing-reference) 
 
 ## Status & roadmap
 
-**Production-oriented, not production-ready.** Roadmap: golden-dataset evaluation suite → domain KPI modules → observability/cost dashboard → interactive charts + Arabic/RTL reports → forecasting & anomaly detection.
+**Production-oriented, not production-ready.** All 8 pipeline stages are implemented and E2E verified on real data. Orchestration (`crew/flows.py` + `main.py`) and integration/e2e tests are next. Roadmap: orchestration wiring → golden-dataset evaluation suite → domain KPI modules → observability/cost dashboard → interactive charts + Arabic/RTL reports → forecasting & anomaly detection.
 
 ---
 
@@ -475,19 +526,43 @@ insight-forge/
 │   ├── understanding_agent.py  # roles + domain + DSL plan (planning is 2nd Task, not a separate file)
 │   ├── data_quality.py         # Engine only, no LLM — invoked by flows.py
 │   ├── cleaning_agent.py
-│   ├── analyst_agent.py
+│   ├── analysis.py             # compute (5a) + charts rendering (5b) in ONE agent
 │   ├── insight_agent.py
 │   ├── report_agent.py
 │   └── qa_agent.py
 ├── analysis/                   # pure computation, no LLM
 │   ├── chart_planner.py        # data-shape rule table → chart kind + reason
-│   ├── evidence.py             # evidence_id minting + evidence_registry read/write (the only writer)
-│   ├── generic/                # descriptive, correlation, distribution, trend
-│   └── domains/                # sales, finance, marketing, hr, operations
+│   ├── chart_renderer.py       # hand-rolled SVG renderers (12 kinds)
+│   ├── dsl_executor.py         # whitelist DSL ops over ALL rows
+│   ├── evidence.py             # evidence_id minting + evidence_registry.json (the only writer)
+│   ├── report_builder.py       # Jinja2 report rendering + 9 section renderers
+│   ├── qa_recompute.py         # KPI recomputation + reference validation
+│   ├── qa_verdict.py           # score formula + deterministic verdict
+│   ├── generic/                # descriptive, correlation, distribution, trend, comparison
+│   └── domains/                # sales, finance, marketing, hr, operations (placeholder)
 ├── shared/
-│   ├── tools.py                # CrewAI @tool wrappers
-│   ├── schemas.py               # Pydantic models
-│   ├── dsl_validator.py        # DSL whitelist — used by Understanding (build) and Analysis (execute)
+│   ├── core/                    # pure logic, no CrewAI — the unit-testable layer
+│   │   ├── validation.py        # FileValidator (ext/MIME/signature/parse/rows)
+│   │   ├── reader.py            # FileReader (discovery + extract_sheet, streamed)
+│   │   ├── profiler.py          # DataProfiler (profile + samples, PII-redacted)
+│   │   ├── pii.py               # PiiDetector (rule-based, no LLM)
+│   │   ├── business_context.py  # BusinessContextGatherer (dialog + generic mode)
+│   │   ├── understanding.py     # role rules §2.2 + domain facts + DSL plan builder
+│   │   ├── data_quality.py      # §2.3 checks + deterministic repair
+│   │   └── cleaning.py          # §2.4 strategy table + execution
+│   ├── tools/                   # CrewAI @tool wrappers, aggregated in __init__.py
+│   │   ├── file_io.py           # file_validator · file_reader · file_sheet_extract
+│   │   ├── profiling.py         # pii_detector · data_profiler
+│   │   ├── human.py             # human_input
+│   │   ├── understanding.py     # column_profiler · domain_classifier · dsl_plan_builder
+│   │   ├── data_quality.py      # 6+1 stage-3 check tools
+│   │   ├── cleaning.py          # 7 stage-4 tools
+│   │   ├── analysis.py          # 5 stage-5 tools
+│   │   ├── report.py            # 4 stage-7 tools
+│   │   └── qa.py                # 3 stage-8 tools
+│   ├── schemas.py               # Pydantic models for every artifact
+│   ├── dsl_validator.py         # DSL whitelist — used by Understanding (build) and Analysis (execute)
+│   ├── llm.py                   # single build_llm(cfg, agent_name) factory
 │   ├── logger.py                # structured per-stage log → runs/<run_id>/logs/
 │   └── utils.py                 # config load, run_id allocator
 ├── resources/                  # read-only static assets
@@ -496,13 +571,14 @@ insight-forge/
 ├── runs/                       # run isolation — the only writable surface per run
 │   └── <run_id>/
 │       ├── data/                # raw/ extracted/ processed/
-│       ├── knowledge/           # business_context.json (per-run, distinct from resources/business_context/)
-│       ├── metadata/            # data_profile · dataset_understanding · analysis_plan · data_quality_report · cleaning_result · chart_metadata · report_result · qa_verdict
-│       ├── outputs/             # report.html · kpis.json · statistical_results.json · insights.json · evidence_registry.json · run_comparison.json · charts/
+│       ├── knowledge/           # business_context.json (per-run)
+│       ├── metadata/            # data_profile · understanding · analysis_plan · dq_report · cleaning_result · chart_metadata · report_result · qa_verdict
+│       ├── outputs/             # kpis.json · statistical_results.json · insights.json · evidence_registry.json · charts/
+│       ├── report.html          # final rendered report
 │       ├── logs/                # LLM/tool logs
 │       └── master_manifest.json
-├── cache/                       # key→run_id index (idempotency) + source_name→run_ids index
-└── tests/                       # unit/ integration/ regression/ security/ statistical/ agent/ e2e/ golden/ fixtures/
+├── cache/                       # key→run_id index (idempotency)
+└── tests/                       # unit/ + Flow_review/ live viewer + fixtures/
 ```
 
 </details>

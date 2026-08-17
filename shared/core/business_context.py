@@ -80,6 +80,10 @@ class BusinessContextGatherer:
 
     # ------------------------------------------------------------- internals
 
+    def ask(self, prompt: str, deadline: float) -> str | None:
+        """Public blocking input with per-question timeout; None means timed out."""
+        return self._ask(prompt, deadline)
+
     def _ask(self, prompt: str, deadline: float) -> str | None:
         """Blocking input with per-question timeout; None means timed out."""
         remaining = max(0.0, deadline - time.monotonic())

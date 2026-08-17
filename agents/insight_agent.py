@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from analysis.chart_renderer import _fmt
+from shared.formatting import fmt as _fmt, parse_json as _parse_json
 from shared.llm import build_llm
 from shared.logger import RunLogger
 from shared.schemas import Insight, KpiResult, Recommendation, StatisticalResult
@@ -366,7 +366,7 @@ def _apply_review_gate(run_dir: Path, cfg: Dict[str, Any],
         from shared.core.business_context import BusinessContextGatherer
         timeout_min = float(cfg["limits"].get("human_input_timeout_min", 5.0))
         gatherer = BusinessContextGatherer(timeout_seconds=int(timeout_min * 60))
-        answer = gatherer._ask(
+        answer = gatherer.ask(
             "Review the generated insights. Reply 'approve', "
             "'edit: <new descriptions JSON keeping evidence_ids>', or "
             "'regenerate'.\n\n" + preview, time.monotonic() + timeout_min * 60)
@@ -485,17 +485,6 @@ def _load_stats(run_dir: Path) -> List[StatisticalResult]:
         raise FileNotFoundError(f"{path} missing - run Stage 5 first")
     return [StatisticalResult(**s) for s in
             json.loads(path.read_text(encoding="utf-8")).get("results", [])]
-
-
-def _parse_json(raw: str) -> Any:
-    start = raw.find("{") if "{" in raw else -1
-    end = raw.rfind("}")
-    try:
-        if start == -1 or end <= start:
-            return json.loads(raw.strip()) if raw.strip() else None
-        return json.loads(raw[start:end + 1])
-    except (json.JSONDecodeError, TypeError):
-        return None
 
 
 def main(argv: Optional[List[str]] = None) -> int:

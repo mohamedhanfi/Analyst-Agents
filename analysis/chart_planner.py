@@ -393,16 +393,24 @@ def plan_charts(df: pd.DataFrame, plan: AnalysisPlan,
                 max_chart_count: int = 20,
                 thin_threshold: int = THIN_THRESHOLD,
                 proposals: List[Dict[str, Any]] | None = None,
+                accepted_kinds: Dict[str, str] | None = None,
                 ) -> Tuple[List[ChartMetadata], bool]:
     """Plan all candidate charts from the KPI list + numeric/ordinal columns.
 
     ``proposals`` (optional) are LLM-suggested kinds
     ``[{kpi_id, kind, reason}]`` — validated internally (whitelist +
     data-shape feasibility); rejected entries fall back to the rule table.
+    ``accepted_kinds`` (optional) is a pre-computed accepted mapping from
+    ``validate_proposed_kinds`` — when provided, the internal validation is
+    skipped (avoids double computation).
     Returns (chart_metadata list, charts_truncated). Order after ranking is the
     final draw order; excess candidates are dropped lowest-ranked first.
     """
-    accepted, _ = validate_proposed_kinds(df, plan, understanding, proposals)
+    if accepted_kinds is None:
+        accepted, _ = validate_proposed_kinds(df, plan, understanding,
+                                              proposals)
+    else:
+        accepted = accepted_kinds
     measures = measure_columns(understanding, df)
     candidates: List[ChartMetadata] = []
     index = 0

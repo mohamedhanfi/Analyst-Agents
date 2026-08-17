@@ -18,6 +18,7 @@ import pandas as pd
 
 from analysis.dsl_executor import (grouped_growth_values, grouped_values,
                                    growth_series)
+from shared.formatting import fmt as _fmt
 from shared.schemas import ChartMetadata, DslOperation, KpiResult
 
 WIDTH, HEIGHT = 800, 450
@@ -39,23 +40,17 @@ _FONT = "12px system-ui, sans-serif"
 def escape_xml(text: Any) -> str:
     """Escape text for safe embedding inside SVG/HTML."""
     return (str(text).replace("&", "&amp;").replace("<", "&lt;")
-            .replace(">", "&gt;").replace('"', "&quot;")
-            .replace("'", "&apos;"))
+             .replace(">", "&gt;").replace('"', "&quot;")
+             .replace("'", "&apos;"))
 
 
-def _fmt(value: float) -> str:
-    """Short, deterministic number formatting (no trailing float noise)."""
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return ""
-    if isinstance(value, int):
-        return f"{value:,}"
-    if abs(value) >= 1000:
-        return f"{value:,.0f}"
-    if value == 0:
-        return "0"
-    if abs(value) >= 1:
-        return f"{value:,.2f}"
-    return f"{value:.3f}".rstrip("0").rstrip(".")
+def _contrast_fill(hex_color: str) -> str:
+    """Return white or dark text depending on luminance of background."""
+    hex_color = hex_color.lstrip("#")
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    return "#ffffff" if luminance < 140 else "#222222"
+
 
 
 def _to_float(value: Any) -> float | None:
@@ -367,7 +362,8 @@ def _render_pie(chart: ChartMetadata, df: pd.DataFrame, kpi: KpiResult,
         pct = 100.0 * value / total
         parts.append(
             f"<text x='{lx:.1f}' y='{ly + 4:.1f}' text-anchor='middle' "
-            f"font-size='11px' font-family='{_FONT[5:]}' fill='#ffffff'>"
+            f"font-size='11px' font-family='{_FONT[5:]}' "
+            f"fill='{_contrast_fill(_color(i))}'>"
             f"{_fmt(pct)}%</text>")
     legend = ""
     for i, (label, value) in enumerate(zip(labels, values)):
@@ -472,31 +468,31 @@ def _render_boxplot(chart: ChartMetadata, df: pd.DataFrame, kpi: KpiResult,
     span = (v_max - v_min) or 1.0
     cx = 400.0
     box_w = 120.0
-    y = lambda value: 60 + 320 * (1 - (value - v_min) / span)
+    _y = lambda value: 60 + 320 * (1 - (value - v_min) / span)
     color = _color(0)
     parts = [
-        f"<line x1='{cx - box_w / 2}' y1='{y(lower):.1f}' "
-        f"x2='{cx + box_w / 2}' y2='{y(lower):.1f}' stroke='#555555' "
+        f"<line x1='{cx - box_w / 2}' y1='{_y(lower):.1f}' "
+        f"x2='{cx + box_w / 2}' y2='{_y(lower):.1f}' stroke='#555555' "
         f"stroke-width='2'/>",
-        f"<line x1='{cx}' y1='{y(lower):.1f}' x2='{cx}' y2='{y(q1):.1f}' "
+        f"<line x1='{cx}' y1='{_y(lower):.1f}' x2='{cx}' y2='{_y(q1):.1f}' "
         f"stroke='#555555' stroke-width='2'/>",
-        f"<rect x='{cx - box_w / 2:.1f}' y='{y(q3):.1f}' width='{box_w:.1f}' "
-        f"height='{y(q1) - y(q3):.1f}' fill='{color}' fill-opacity='0.35' "
+        f"<rect x='{cx - box_w / 2:.1f}' y='{_y(q3):.1f}' width='{box_w:.1f}' "
+        f"height='{_y(q1) - _y(q3):.1f}' fill='{color}' fill-opacity='0.35' "
         f"stroke='{color}' stroke-width='2'/>",
-        f"<line x1='{cx - box_w / 2}' y1='{y(q2):.1f}' x2='{cx + box_w / 2}' "
-        f"y2='{y(q2):.1f}' stroke='{color}' stroke-width='2.5'/>",
-        f"<line x1='{cx}' y1='{y(q3):.1f}' x2='{cx}' y2='{y(upper):.1f}' "
+        f"<line x1='{cx - box_w / 2}' y1='{_y(q2):.1f}' x2='{cx + box_w / 2}' "
+        f"y2='{_y(q2):.1f}' stroke='{color}' stroke-width='2.5'/>",
+        f"<line x1='{cx}' y1='{_y(q3):.1f}' x2='{cx}' y2='{_y(upper):.1f}' "
         f"stroke='#555555' stroke-width='2'/>",
-        f"<line x1='{cx - box_w / 2}' y1='{y(upper):.1f}' "
-        f"x2='{cx + box_w / 2}' y2='{y(upper):.1f}' stroke='#555555' "
+        f"<line x1='{cx - box_w / 2}' y1='{_y(upper):.1f}' "
+        f"x2='{cx + box_w / 2}' y2='{_y(upper):.1f}' stroke='#555555' "
         f"stroke-width='2'/>",
     ]
     for value in outliers:
-        parts.append(f"<circle cx='{cx}' cy='{y(value):.1f}' r='3.5' "
+        parts.append(f"<circle cx='{cx}' cy='{_y(value):.1f}' r='3.5' "
                      f"fill='{_color(1)}'/>")
     for name, value in (("Q1", q1), ("median", q2), ("Q3", q3)):
         parts.append(
-            f"<text x='{cx + box_w / 2 + 10}' y='{y(value) + 4:.1f}' "
+            f"<text x='{cx + box_w / 2 + 10}' y='{_y(value) + 4:.1f}' "
             f"font-size='11px' font-family='{_FONT[5:]}' fill='#555555'>"
             f"{name}: {_fmt(float(value))}</text>")
     parts.append(
@@ -594,18 +590,21 @@ def _render_heatmap(chart: ChartMetadata, df: pd.DataFrame, kpi: KpiResult,
                 value = 0.0
             alpha = 0.15 + 0.85 * abs(value)
             color = "#0072B2" if value >= 0 else "#D55E00"
+            header = (f"<text x='{x0 + j * cell + cell / 2:.1f}' "
+                      f"y='{y0 + i * cell - 8:.1f}' text-anchor='middle' "
+                      f"font-size='10px' font-family='{_FONT[5:]}' "
+                      f"fill='#555555'>{escape_xml(col)}</text>"
+                      if i == 0 else "")
             parts.append(
                 f"<rect x='{x0 + j * cell:.1f}' y='{y0 + i * cell:.1f}' "
                 f"width='{cell - 2:.1f}' height='{cell - 2:.1f}' "
                 f"fill='{color}' fill-opacity='{alpha:.2f}'/>"
                 f"<text x='{x0 + j * cell + cell / 2:.1f}' "
                 f"y='{y0 + i * cell + cell / 2 + 4:.1f}' text-anchor='middle' "
-                f"font-size='11px' font-family='{_FONT[5:]}' fill='#ffffff'>"
+                f"font-size='11px' font-family='{_FONT[5:]}' "
+                f"fill='{_contrast_fill(color)}'>"
                 f"{_fmt(value)}</text>"
-                f"<text x='{x0 + j * cell + cell / 2:.1f}' "
-                f"y='{y0 + i * cell - 8:.1f}' text-anchor='middle' "
-                f"font-size='10px' font-family='{_FONT[5:]}' fill='#555555'>"
-                f"{escape_xml(col)}</text>")
+                f"{header}")
         parts.append(
             f"<text x='{x0 - 8:.1f}' y='{y0 + i * cell + cell / 2 + 4:.1f}' "
             f"text-anchor='end' font-size='10px' font-family='{_FONT[5:]}' "
@@ -631,7 +630,7 @@ def _render_stacked(chart: ChartMetadata, df: pd.DataFrame, kpi: KpiResult,
     stacks: List[List[float]] = []
     for key, group in rows:
         labels_out.append(str(key))
-        stacks.append([_to_float(group[col].sum()) or 0.0
+        stacks.append([max(0.0, _to_float(group[col].sum()) or 0.0)
                        for col in measures])
     if not labels_out:
         return _svg(chart, "<text x='50%' y='50%' text-anchor='middle' "
