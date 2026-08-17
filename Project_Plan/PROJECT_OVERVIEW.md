@@ -154,11 +154,14 @@ there, so stages can run standalone (you can re-run just stage 4 on an old run).
 
 ```
 Insight Forge
-├── main.py                        # [STUB] future entry point (Task 11) — empty
+├── main.py                        # [DONE] entry point — builds Crew, runs Flow
 ├── config.yaml                    # settings: agents, hard limits, retention, LLM key
 ├── .env / .env.example            # API key (OPENROUTER_API_KEY) — never committed
 ├── pyproject.toml                 # dependencies (crewai, pandas, scipy, ...)
-├── crew/                          # [STUB] crew.py + flows.py (Task 11) — empty
+├── crew/                          # [DONE] orchestration
+│   ├── __init__.py
+│   ├── crew.py                    # run_pipeline() — wires all 8 stages
+│   └── flows.py                   # flow helpers: dq_gate, cleaning_retry, caps, verdict
 │
 ├── agents/                        # one module per pipeline stage
 │   ├── ingestion_agent.py         # [DONE] stage 1
@@ -252,16 +255,15 @@ Insight Forge
 (run `run_20260817_235726_1`): all 8 stages passed, QA verdict
 `APPROVED_WITH_WARNINGS` (score 97.5, 1 valid warning), report renders correctly.
 
-### Remaining (Tasks 11–12)
+### Remaining (Task 12)
 
 | Task | Area | What's left |
 |------|------|-------------|
-| 11 | Orchestration | `crew/crew.py`, `crew/flows.py`, `main.py` — wire all stages end-to-end with DQ gate + QA verdict branching |
 | 12 | Tests & golden datasets | integration / e2e / security / golden fixtures |
 
 Notes:
-- `crew/` and `main.py` are **empty stubs** — the pipeline currently runs stage-by-stage via CLI commands, not as one `python main.py <file>` invocation.
-- **config.yaml** `agents.qa.model` still shares the same model as generation agents — should be distinct per spec §2.8.
+- **`python main.py <file>`** runs the full 8-stage pipeline end-to-end
+- **config.yaml** `agents.qa.model` still shares the same model as generation agents — should be distinct per spec §2.8
 
 ---
 

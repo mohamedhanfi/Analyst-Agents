@@ -15,10 +15,10 @@
 | `agents/` (8 وكلاء) | ✅ مكتمل — كلها مُنفَّذة | 100% |
 | `analysis/` (إحصاءات · رسوم · تقرير · QA) | ✅ مكتمل | 100% |
 | `resources/report_template.html` | ✅ مُعاد كتابته كقالب Jinja2 | 100% |
-| الاختبارات الوحدوية | ✅ 487 اختبارًا مجتازًا | 100% |
-| `crew/flows.py` + `main.py` | ❌ لا يزالان فارغين (Task 11) | 0% |
+| `crew/` + `main.py` (التكامل) | ✅ مكتمل — `python main.py` يعمل | 100% |
+| الاختبارات الوحدوية | ✅ 519 اختبارًا مجتازًا | 100% |
 | اختبارات agent/e2e/integration | ❌ لم تبدأ | 0% |
-| **الإجمالي** | | **≈ 85%** |
+| **الإجمالي** | | **≈ 90%** |
 
 ---
 
@@ -44,18 +44,19 @@
 - Report rendered: كل الأقسام سليمة (exec summary + masthead + KPIs + stats + charts + insights + recommendations + evidence)
 - **487 اختبارًا مجتازًا، 0 أخطاء**
 
+### ب. ما تم تنفيذه حديثًا — Task 11 (التكامل)
+- `crew/flows.py` — مساعدات تدفق: dq_gate · cleaning_retry · caps · verdict
+- `crew/crew.py` — `run_pipeline()` يربط كل المراحل 1–8 مع بوابة DQ وحلقة إعادة فحص Cleaning
+- `main.py` — نقطة دخول: `python main.py <file> [--crew] [--locale]`
+- `agents/data_quality.py` — مُعامِل `data_source` (`"extracted"` / `"cleaned"`) + `skip_repair`
+- `shared/core/data_quality.py` — `assemble_report()` يدعم `skip_repair`
+- **519 اختبارًا مجتازًا + E2E ناجح (`APPROVED_WITH_WARNINGS`)**
+
 ---
 
 ## ⚠️ ما لم يُنفَّذ بعد (المتبقي)
 
-### أ. التكامل — Task 11 (المهمة التالية)
-| الملف | المطلوب |
-|---|---|
-| `crew/crew.py` | ربط كل الوكلاء بترتيب Pipeline |
-| `crew/flows.py` | DQ gate · cleaning recheck loop · QA verdict branching |
-| `main.py` | نقطة الدخول: `python main.py <file>` → run كامل |
-
-### ب. اختبارات إضافية — Task 12
+### اختبارات إضافية — Task 12
 - `tests/agent/` — LLM JSON validity + plan viability
 - `tests/integration/` — inter-stage handoffs
 - `tests/e2e/` — full pipeline on golden datasets
@@ -68,4 +69,4 @@
 - `Project_Plan/PROJECT_STRUCTURE.md` — البنية التفصيلية
 - `Project_Plan/DAILY_TASKS.md` — مُتتبِّع المهام (12 مهمة)
 - `config.yaml` — الحدود والإعدادات
-- `tests/unit/` — 487 اختبارًا وحدويًا
+- `tests/unit/` — 519 اختبارًا وحدويًا

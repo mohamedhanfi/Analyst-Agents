@@ -34,7 +34,17 @@ STAGE = "data_quality"
 
 def run_data_quality(run_dir: str | Path,
                      cfg: Dict[str, Any] | None = None,
-                     logger: RunLogger | None = None) -> Dict[str, Any]:
+                     logger: RunLogger | None = None,
+                     data_source: str = "extracted") -> Dict[str, Any]:
+    """Run stage-3 data-quality checks.
+
+    Parameters
+    ----------
+    data_source : str
+        ``"extracted"`` (default) reads from ``data/extracted/``.
+        ``"cleaned"`` reads from ``data/processed/cleaned_data.csv``
+        — used for the post-cleaning recheck.
+    """
     cfg = cfg or load_config(require_key=False)
     run_dir = Path(run_dir)
     run_id = run_dir.name
@@ -44,7 +54,7 @@ def run_data_quality(run_dir: str | Path,
     log.stage_start(STAGE)
     start = time.monotonic()
     try:
-        summary = _run(run_dir, cfg, log)
+        summary = _run(run_dir, cfg, log, data_source=data_source)
         summary.setdefault("run_id", run_id)
         status = summary.get("status", "failed")
     except Exception as exc:  # noqa: BLE001 -- a failed stage must not crash the run
@@ -58,15 +68,23 @@ def run_data_quality(run_dir: str | Path,
 
 
 def _run(run_dir: Path, cfg: Dict[str, Any],
-         log: RunLogger) -> Dict[str, Any]:
+         log: RunLogger, data_source: str = "extracted") -> Dict[str, Any]:
     profile = _load_profile(run_dir)
     context = _load_context(run_dir)
     understanding = _load_understanding(run_dir)
-    extracted = _find_extracted_csv(run_dir)
-    if extracted is None:
-        raise RuntimeError(
-            "No extracted CSV under data/extracted/ - run Stage 1 first.")
-    df = pd.read_csv(extracted, encoding="utf-8-sig")
+
+    if data_source == "cleaned":
+        csv_path = run_dir / "data" / "processed" / "cleaned_data.csv"
+        if not csv_path.exists():
+            raise RuntimeError(
+                "No cleaned CSV under data/processed/ - run Stage 4 first.")
+    else:
+        csv_path = _find_extracted_csv(run_dir)
+        if csv_path is None:
+            raise RuntimeError(
+                "No extracted CSV under data/extracted/ - run Stage 1 first.")
+
+    df = pd.read_csv(csv_path, encoding="utf-8-sig")
 
     limits = cfg.get("limits") or {}
 
@@ -75,7 +93,8 @@ def _run(run_dir: Path, cfg: Dict[str, Any],
 
     report, repair_log = assemble_report(
         understanding=understanding, profile=profile, df=df,
-        context=context, limits=limits, log_tool=log_tool)
+        context=context, limits=limits, log_tool=log_tool,
+        skip_repair=(data_source == "cleaned"))
 
     metadata = run_dir / "metadata"
     metadata.mkdir(parents=True, exist_ok=True)

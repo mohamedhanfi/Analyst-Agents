@@ -415,13 +415,21 @@ def assemble_report(understanding: DatasetUnderstanding,
                     df: pd.DataFrame,
                     context: BusinessContext,
                     *,
-                    limits: Optional[Dict[str, Any]] = None,
-                    log_tool: LogTool = None,
-                    ) -> Tuple[DataQualityReport, Dict[str, Any]]:
+                     limits: Optional[Dict[str, Any]] = None,
+                     log_tool: LogTool = None,
+                     skip_repair: bool = False,
+                      ) -> Tuple[DataQualityReport, Dict[str, Any]]:
     """Run every check + the deterministic repair; build the report.
 
     Gate: status is 'needs_repair' when any high-severity finding exists or
     the repair changed data; otherwise 'passed' (Cleaning may proceed).
+
+    Parameters
+    ----------
+    skip_repair : bool
+        If True (used for post-cleaning rechecks), skip the
+        deterministic_repair step — the data has already been cleaned
+        and CSV round-trips may re-introduce benign type mismatches.
     """
     cfg_limits = dict(_default_limits())
     if limits:
@@ -459,9 +467,12 @@ def assemble_report(understanding: DatasetUnderstanding,
         "duplicate_detector_tool", lambda: detect_duplicates(df))
     issues += _timed("referential_integrity_tool",
                      lambda: check_referential_integrity(understanding, df))
-    _, repair_log = _timed(
-        "deterministic_repair_tool",
-        lambda: deterministic_repair(understanding, df))
+    if skip_repair:
+        repair_log = {"repair_applied": False, "actions": []}
+    else:
+        _, repair_log = _timed(
+            "deterministic_repair_tool",
+            lambda: deterministic_repair(understanding, df))
 
     if missingness["assessment"] in ("MAR_suspected", "MNAR_suspected"):
         issues.append(DqIssue(SEV_MEDIUM, CAT_MISSINGNESS, "",
