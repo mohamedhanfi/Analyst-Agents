@@ -476,3 +476,34 @@ def test_run_insights_passes_on_synthetic_run(tmp_path):
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert len(payload["insights"]) == 3
     assert payload["warnings"] == []
+
+
+def test_run_insights_crew_refinement_saves_validated_models(
+        tmp_path, monkeypatch):
+    """Regression: LLM refinement passed DICTS into _save_outputs which
+    calls .model_dump() -> 'dict' object has no attribute 'model_dump'
+    crashed the insights stage in crew mode after accepting a draft."""
+    run_dir = _make_run(tmp_path, _BASE_KPIS, [_WEAK_CORR, _SIG_CHI2],
+                        _registry(["EV-001", "EV-002", "EV-009", "EV-021"]))
+    insights, recommendations, _ = _generate_insights(
+        run_dir, RunLogger(run_dir, "run"))
+    draft = {
+        "insights": [{**i.model_dump(),
+                      "title": "Rewritten title", "description": "Rewritten."}
+                     for i in insights],
+        "recommendations": [
+            {**r.model_dump(), "title": "Rewritten rec"}
+            for r in recommendations],
+    }
+
+    def fake_complete_json(cfg, agent_name, system, user,
+                           schema=None, validator=None):
+        return draft, []
+
+    monkeypatch.setattr("shared.llm.complete_json", fake_complete_json)
+    summary = run_insights(run_dir, cfg={"limits": {}},
+                           use_crew=True)
+    assert summary["status"] == "passed"
+    payload = json.loads(
+        (run_dir / "outputs" / "insights.json").read_text(encoding="utf-8"))
+    assert payload["insights"][0]["title"] == "Rewritten title"

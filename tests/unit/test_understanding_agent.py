@@ -98,6 +98,17 @@ def test_domain_detected_from_context(tmp_path, cfg):
     assert s["domain_confidence"] > 0.0
 
 
+def test_build_understanding_tasks_accepts_str_run_dir(tmp_path, cfg):
+    """Regression: crew mode crashed with ``str / str`` — the tasks builder
+    stringified run_dir then loaded profile/context with the string."""
+    run_dir = make_run_dir(tmp_path)
+    from agents.understanding_agent import (
+        build_understanding_agent, build_understanding_tasks)
+    agent = build_understanding_agent(cfg)
+    tasks = build_understanding_tasks(agent, str(run_dir), cfg)
+    assert len(tasks) == 3
+
+
 def test_generic_mode_domain(tmp_path, cfg):
     run_dir = make_run_dir(tmp_path, context=make_context(generic_mode=True))
     s = run_understanding(run_dir, cfg=cfg)

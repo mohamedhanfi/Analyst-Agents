@@ -11,7 +11,7 @@ llm:
   provider: openrouter
   base_url: "https://openrouter.ai/api/v1"
   api_key_env: OPENROUTER_API_KEY
-  model: openrouter/nvidia/nemotron-3.5-lightning:free
+  model: deepseek/deepseek-v4-flash
   temperature: 0.0        # reproducible LLM stages (Â§5: temperature 0 + seed)
   seed: 42
   max_retries: 3          # LLM retries per agent task (Â§1)
@@ -19,14 +19,12 @@ llm:
   max_cost_usd: 5.00      # hard stop + fallback reason `cost_limit_exceeded` (Â§1)
 
 # Per-agent overrides: every field optional, inherits from llm.* above.
-# QA MUST use a different model than generation (Â§2.8).
+# All agents share one model (deepseek/deepseek-v4-flash) - no overrides.
 agents:
   ingestion:
     role: "Data Ingestion Specialist"
     goal: "Validate, extract, profile and gather business context for the uploaded dataset."
     backstory: "A meticulous ingestion specialist. Never trusts the file; never forwards raw cell content. Follows the deep-validation rules exactly."
-    # Â§2.1: Agent 1 uses a small model
-    model: openrouter/nvidia/nemotron-3.5-lightning:free
   understanding:
     role: "Data Understanding Specialist"
     goal: "Classify column roles, detect domain and entities, and build a whitlist-only DSL analysis plan."
@@ -51,8 +49,6 @@ agents:
     role: "Quality Assurance Auditor"
     goal: "Recompute 100% of KPIs, validate structure, and decide the final verdict deterministically."
     backstory: "Independent guard: Python recomputation is authoritative. Uses a different model than generation."
-    # Â§2.8: different model than generation
-    model: openrouter/nvidia/nemotron-3.5-lightning:free
 
 # Hard limits (Â§1) â€” deterministic, prevent unbounded loops / resource blowups
 limits:

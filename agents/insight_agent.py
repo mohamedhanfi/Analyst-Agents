@@ -434,7 +434,10 @@ def _refine_with_llm(run_dir: Path, cfg: Dict[str, Any],
 
     log.info(STAGE, "llm refinement accepted",
              insights=len(valid), recommendations=len(valid_recs))
-    _save_outputs(run_dir, valid, valid_recs, warnings)
+    _save_outputs(run_dir,
+                  [Insight(**i) for i in valid],
+                  [Recommendation(**r) for r in valid_recs],
+                  warnings)
     return warnings
 
 

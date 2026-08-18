@@ -31,13 +31,26 @@ DEFAULT_QUESTIONS: List[str] = [
 
 InputFunc = Callable[[str], str]
 
+# Web deployments (app.py) register their own interactive provider so the
+# pipeline never falls back to blocking console input(). None -> console.
+_INTERACTIVE_PROVIDER: InputFunc | None = None
+
+
+def set_interactive_provider(fn: InputFunc | None) -> None:
+    """Route every human question (ingestion, review gate, crew tools)
+    through ``fn`` instead of the terminal. ``fn`` blocks until the user
+    answers and returns the raw answer ("" or None semantics handled by the
+    caller's timeout path)."""
+    global _INTERACTIVE_PROVIDER
+    _INTERACTIVE_PROVIDER = fn
+
 
 class BusinessContextGatherer:
     def __init__(self, timeout_seconds: int = 300,
                  input_func: InputFunc | None = None,
                  answered_by: str = ""):
         self.timeout_seconds = timeout_seconds
-        self._input = input_func or input
+        self._input = input_func or _INTERACTIVE_PROVIDER or input
         self.answered_by = answered_by or self._default_identity()
         self._answer_log: List[Dict] = []
 

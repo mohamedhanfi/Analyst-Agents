@@ -12,7 +12,24 @@ import json
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import os
+
+# Kill the OpenTelemetry exporters CrewAI/litellm try to reach (spams the
+# console with "Service Unavailable" retries) — must be set before the
+# SDK initializes, i.e. before crewai is imported below.
+os.environ.setdefault("OTEL_TRACES_EXPORTER", "none")
+os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
+os.environ.setdefault("OTEL_LOGS_EXPORTER", "none")
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+os.environ.setdefault("TELEMETRY_OPT_OUT", "true")
+os.environ.setdefault("CREWAI_TELEMETRY_OPT_OUT", "true")
+
 from crewai import LLM
+import litellm
+
+# Errors surface through exceptions (surfaced in the app), not as red
+# console spam — the web app keeps its console quiet.
+litellm.suppress_debug_info = True
 
 DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
 
@@ -162,6 +179,34 @@ def complete_text(
             time.sleep(min(2 ** (attempt - 1), 8))
     warnings.append(f"llm_complete_text_failed_{last_error[:120]}")
     return None, warnings
+
+
+def test_connection(
+    cfg: Dict[str, Any],
+    agent_name: str = "ingestion",
+    timeout: float = 15.0,
+) -> Optional[str]:
+    """One quick call to the configured model — a pre-flight check.
+
+    Returns None when the LLM API answered, otherwise a human-readable
+    error message (missing key, bad URL, auth failure, provider outage...).
+    """
+    import litellm
+
+    kwargs = _llm_kwargs(cfg, agent_name)
+    kwargs["num_retries"] = 0
+    kwargs["timeout"] = float(timeout)
+    try:
+        resp = litellm.completion(
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=128, **kwargs)
+        # Connectivity is what matters — a reasoning model may spend the
+        # whole budget on reasoning_content and return empty content.
+        if resp.choices:
+            return None
+        return "LLM returned no choices"
+    except Exception as exc:  # noqa: BLE001 -- any provider/auth/network error
+        return str(exc)[:300]
 
 
 def _extract_json(content: str) -> Optional[Dict[str, Any]]:

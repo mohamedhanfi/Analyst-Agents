@@ -19,7 +19,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
+
+# CrewAI/litellm ship an OpenTelemetry tracer that retries exporting span
+# batches to a collector that is never running here ("Service Unavailable"
+# spam). Disable the whole telemetry stack before anything imports it.
+os.environ.setdefault("OTEL_TRACES_EXPORTER", "none")
+os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
+os.environ.setdefault("OTEL_LOGS_EXPORTER", "none")
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+os.environ.setdefault("TELEMETRY_OPT_OUT", "true")
+os.environ.setdefault("CREWAI_TELEMETRY_OPT_OUT", "true")
 import queue
 import sys
 import threading
@@ -63,6 +74,9 @@ class State:
         self.run_id: Optional[str] = None
         self.error: Optional[str] = None
         self.queued: List[str] = []
+        self.pending_question: Optional[str] = None
+        self._answer_ready = threading.Event()
+        self._answer_value: Optional[str] = None
 
     def start(self, run_id: str) -> None:
         with self.lock:
@@ -88,10 +102,32 @@ class State:
             if run_id in self.queued:
                 self.queued.remove(run_id)
 
+    def ask(self, prompt: str, timeout_seconds: float) -> Optional[str]:
+        """Block the worker until the web UI answers (or timeout)."""
+        with self.lock:
+            self.pending_question = prompt
+            self._answer_value = None
+        self._answer_ready.clear()
+        self._answer_ready.wait(timeout_seconds)
+        with self.lock:
+            answer = self._answer_value
+            self.pending_question = None
+        return answer
+
+    def answer(self, prompt: str, value: str) -> bool:
+        """Web UI submits an answer for the currently pending question."""
+        with self.lock:
+            if self.pending_question != prompt:
+                return False
+            self._answer_value = value
+            self._answer_ready.set()
+        return True
+
     def snapshot(self) -> Dict[str, Any]:
         with self.lock:
             return {"busy": self.busy, "run_id": self.run_id,
-                    "error": self.error, "queued": list(self.queued)}
+                    "error": self.error, "queued": list(self.queued),
+                    "pending_question": self.pending_question}
 
 
 STATE = State()
@@ -101,6 +137,15 @@ _QUEUE: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue()
 # ---------------------------------------------------------------------------
 # Pipeline driver — single FIFO worker
 # ---------------------------------------------------------------------------
+
+
+def _web_ask(prompt: str) -> str:
+    """Blocking ask routed through the web UI (registered as the global
+    interactive provider + the ingestion answer_provider)."""
+    return STATE.ask(prompt.strip(), timeout_seconds=_ASK_TIMEOUT) or ""
+
+
+_ASK_TIMEOUT = 300.0
 
 
 def _run_job(job: Dict[str, Any]) -> None:
@@ -115,9 +160,13 @@ def _run_job(job: Dict[str, Any]) -> None:
             from shared.security import decrypt_file
             decrypt_file(job["file"], work_file)
         from crew.crew import run_pipeline
-        run_pipeline(file_path=str(work_file), use_crew=job["use_crew"],
+        # Every question the pipeline asks (ingestion, review gate, crew
+        # human tool) is answered in the web UI — never on the console.
+        def _provider(prompt: str) -> str:
+            return _web_ask(prompt.strip())
+        run_pipeline(file_path=str(work_file), use_crew=True,
                      output_dir=job["run_dir"],
-                     answer_provider=lambda _prompt: "")
+                     answer_provider=_provider)
     except Exception as exc:  # noqa: BLE001 -- surface to the UI, never crash
         STATE.fail(f"{type(exc).__name__}: {exc}")
         return
@@ -142,8 +191,7 @@ _WORKER = threading.Thread(target=_worker_loop, daemon=True)
 _WORKER.start()
 
 
-def _start_pipeline(file_name: str, payload: bytes,
-                    use_crew: bool = False) -> Dict[str, Any]:
+def _start_pipeline(file_name: str, payload: bytes) -> Dict[str, Any]:
     from shared.utils import allocate_run_id
     run_id, run_dir = allocate_run_id()
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -158,7 +206,7 @@ def _start_pipeline(file_name: str, payload: bytes,
         dest.write_bytes(cipher)
         encrypted = True
     job = {"run_id": run_id, "run_dir": run_dir, "file": dest,
-           "use_crew": use_crew, "encrypted": encrypted}
+           "use_crew": True, "encrypted": encrypted}
     with STATE.lock:
         queued = STATE.busy
         if queued:
@@ -172,8 +220,18 @@ def _start_demo() -> Dict[str, Any]:
     demo = ROOT / "tests" / "fixtures" / "sales_demo.csv"
     if not demo.is_file():
         return {"ok": False, "error": "demo fixture not found"}
-    return _start_pipeline("sales_demo.csv", demo.read_bytes(),
-                           use_crew=False)
+    return _start_pipeline("sales_demo.csv", demo.read_bytes())
+
+
+def _connect_test() -> Optional[str]:
+    """Pre-flight LLM check — return None when the API is reachable,
+    otherwise the error message to show in the app."""
+    try:
+        cfg = load_config(require_key=True)
+    except Exception as exc:  # noqa: BLE001 -- missing/malformed config
+        return f"LLM is not configured: {exc}"
+    from shared.llm import test_connection
+    return test_connection(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -405,20 +463,32 @@ class Handler(BaseHTTPRequestHandler):
 
     def _do_post(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path in ("/api/start", "/api/demo"):
+        if parsed.path in ("/api/start", "/api/demo", "/api/answer"):
             if not self._auth_ok():
                 return self._reject()
+        if parsed.path == "/api/answer":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length).decode("utf-8", "replace")
+            query = parse_qs(body)
+            value = (query.get("answer") or [""])[0]
+            answered = STATE.answer(STATE.pending_question or "", value)
+            return self._json({"ok": answered})
         if parsed.path == "/api/start":
             query = parse_qs(parsed.query)
             length = int(self.headers.get("Content-Length", 0))
             file_name = (query.get("name") or [""])[0]
-            use_crew = (query.get("crew") or ["0"])[0] == "1"
             if not file_name or length == 0:
                 return self._json({"ok": False,
                                    "error": "file upload missing"}, 400)
+            err = _connect_test()
+            if err:
+                return self._json({"ok": False, "error": err})
             payload = self.rfile.read(length)
-            return self._json(_start_pipeline(file_name, payload, use_crew))
+            return self._json(_start_pipeline(file_name, payload))
         if parsed.path == "/api/demo":
+            err = _connect_test()
+            if err:
+                return self._json({"ok": False, "error": err})
             return self._json(_start_demo())
         self._json({"error": "not found"}, 404)
 
@@ -453,6 +523,11 @@ _INDEX_HTML = r"""<!DOCTYPE html>
   main { max-width:1100px; margin:0 auto; padding:24px 28px 60px; }
   .card { background:var(--panel); border:1px solid var(--line);
           border-radius:14px; padding:20px; margin-bottom:20px; }
+  .qlabel { display:block; font-size:13px; color:var(--muted);
+            margin:12px 0 4px; }
+  .qinput { width:100%; padding:9px; border:1px solid var(--line);
+            border-radius:10px; background:#0b1220; color:var(--fg);
+            font:inherit; resize:vertical; }
   .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
   input[type=file] { flex:1; min-width:260px; padding:10px; border:1px dashed
           var(--line); border-radius:10px; background:#0b1220; color:var(--fg); }
@@ -513,6 +588,13 @@ _INDEX_HTML = r"""<!DOCTYPE html>
           margin-right:8px; vertical-align:-2px; animation:spin 1s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
   .muted { color:var(--muted); }
+  #question { display:none; position:fixed; right:20px; bottom:20px;
+              width:min(430px, 94vw); z-index:60;
+              box-shadow:0 10px 34px rgba(0,0,0,.55);
+              border:1px solid var(--run); }
+  #question .qhead { font-size:12px; color:var(--run); font-weight:700;
+                     letter-spacing:1px; text-transform:uppercase;
+                     margin-bottom:6px; }
 </style>
 </head>
 <body>
@@ -534,9 +616,8 @@ _INDEX_HTML = r"""<!DOCTYPE html>
         color:var(--fg)" placeholder="Server API key (required)">
       <span class="hint">The server requires an X-API-Key for runs.</span>
     </div>
-    <div class="hint">Deterministic mode (no LLM, no API key). Check
-      <label><input type="checkbox" id="crew"> LLM mode (CrewAI)</label>
-      — requires OPENROUTER_API_KEY in .env.</div>
+    <div class="hint">Every run uses the LLM (CrewAI) — the API connection
+      is tested automatically before the pipeline starts.</div>
     <div id="busy"><span class="spin"></span>Pipeline running…</div>
     <div id="queued" class="hint"></div>
     <div id="error"></div>
@@ -564,6 +645,17 @@ _INDEX_HTML = r"""<!DOCTYPE html>
       <thead><tr><th>Run</th><th>Verdict</th><th>Score</th><th>Time</th></tr></thead>
       <tbody id="history"></tbody>
     </table>
+  </div>
+
+  <div class="card" id="question">
+    <div class="qhead">Question from the pipeline</div>
+    <div id="qText" style="font-size:14px;white-space:pre-wrap"></div>
+    <textarea id="qAnswer" class="qinput" rows="3"
+      placeholder="Type your answer here…"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="primary" id="qSend">Send answer</button>
+      <button class="ghost" id="qSkip">Skip (generic mode)</button>
+    </div>
   </div>
 </main>
 <script>
@@ -617,12 +709,37 @@ function showResult(state) {
     '/outputs/charts/' + f + '">' + f + '</a>').join(" ");
 }
 
+function showQuestion(q) {
+  $("qText").textContent = q;
+  $("question").style.display = "block";
+}
+function hideQuestion() {
+  $("question").style.display = "none";
+  $("qAnswer").value = "";
+}
+function answerQ(value) {
+  fetch("/api/answer", {method: "POST",
+    body: "answer=" + encodeURIComponent(value),
+    headers: apiHeaders()}).catch(() => {});
+  hideQuestion();
+}
+$("qSend").addEventListener("click", () => answerQ($("qAnswer").value));
+$("qSkip").addEventListener("click", () => answerQ(""));
+$("qAnswer").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); answerQ($("qAnswer").value); }
+});
+
 function poll() {
   fetch("/api/state").then(r => r.json()).then(state => {
     if (state.error && !state.run_id) { return; }
     window._dur = state.durations || {};
     renderStages(state.status || {});
     $("authRow").style.display = state.auth_required ? "flex" : "none";
+    if (state.pending_question) {
+      showQuestion(state.pending_question);
+    } else {
+      hideQuestion();
+    }
     const q = (state.queued || []).length;
     $("queued").textContent = q
       ? q + " run(s) queued — they start automatically after this one." : "";
@@ -677,13 +794,14 @@ function fetchError(e) {
     + 'page and try again. Details: ' + e + '</div>';
 }
 
-function upload(file, crew) {
-  fetch("/api/start?name=" + encodeURIComponent(file.name) +
-        "&crew=" + (crew ? "1" : "0"),
+function upload(file) {
+  setRunLocked(true);
+  fetch("/api/start?name=" + encodeURIComponent(file.name),
         {method: "POST", body: file, headers: apiHeaders()})
     .then(r => r.json().catch(() => ({ok: false,
       error: "server returned HTTP " + r.status})))
     .then(d => {
+      setRunLocked(false);
       if (!d.ok) {
         $("error").innerHTML = '<div class="error">' + d.error + "</div>";
         return;
@@ -694,24 +812,36 @@ function upload(file, crew) {
       renderStages({});
       poll();
       setInterval(() => { if (!document.hidden) poll(); }, 900);
-    }).catch(e => $("error").innerHTML = fetchError(e));
+    }).catch(e => { setRunLocked(false);
+      $("error").innerHTML = fetchError(e); });
+}
+
+function setRunLocked(on) {
+  $("run").disabled = on;
+  $("demo").disabled = on;
+  $("error").innerHTML = on
+    ? '<div class="hint">Testing LLM connection…</div>' : "";
 }
 
 $("run").addEventListener("click", () => {
   const f = $("file").files[0];
   if (!f) { $("error").innerHTML =
     '<div class="error">Choose a CSV or XLSX file first.</div>'; return; }
-  upload(f, $("crew").checked);
+  upload(f);
 });
-$("demo").addEventListener("click", () =>
-  fetch("/api/demo", {method: "POST", headers: apiHeaders()}).then(r => r.json())
-  .then(d => {
-    if (!d.ok) { $("error").innerHTML =
-      '<div class="error">' + d.error + "</div>"; return; }
-    $("error").innerHTML = "";
-    window._dur = {}; renderStages({}); poll();
-    setInterval(() => { if (!document.hidden) poll(); }, 900);
-  }).catch(e => $("error").innerHTML = fetchError(e)));
+$("demo").addEventListener("click", () => {
+  setRunLocked(true);
+  fetch("/api/demo", {method: "POST", headers: apiHeaders()})
+    .then(r => r.json()).then(d => {
+      setRunLocked(false);
+      if (!d.ok) { $("error").innerHTML =
+        '<div class="error">' + d.error + "</div>"; return; }
+      $("error").innerHTML = "";
+      window._dur = {}; renderStages({}); poll();
+      setInterval(() => { if (!document.hidden) poll(); }, 900);
+    }).catch(e => { setRunLocked(false);
+      $("error").innerHTML = fetchError(e); });
+});
 
 renderStages({});
 loadHistory();
@@ -738,7 +868,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     # Fail fast on config problems instead of inside the run thread.
-    load_config(require_key=False)
+    cfg = load_config(require_key=False)
+    global _ASK_TIMEOUT
+    _ASK_TIMEOUT = float(cfg["limits"].get("human_input_timeout_min", 5.0)) * 60
+    # Keep the console clean — every question goes to the web UI and
+    # framework chatter is silenced (errors still surface in the app).
+    for noisy in ("crewai", "litellm", "httpx", "openai", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.ERROR)
+    # All human questions (ingestion, review gate, crew human tool) are
+    # answered in the web UI — never on the worker's console stdin.
+    from shared.core.business_context import set_interactive_provider
+    set_interactive_provider(_web_ask)
 
     server: Optional[ThreadingHTTPServer] = None
     last_error: Optional[OSError] = None

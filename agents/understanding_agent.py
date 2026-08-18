@@ -98,9 +98,9 @@ def build_understanding_agent(cfg: Dict[str, Any]) -> Agent:
     )
 
 
-def build_understanding_tasks(agent: Agent, run_dir: str,
+def build_understanding_tasks(agent: Agent, run_dir: str | Path,
                               cfg: Dict[str, Any]) -> List[Task]:
-    run_dir = str(run_dir)
+    run_dir = Path(run_dir)
     profile = _load_profile(run_dir)
     context = _load_context(run_dir)
     profile_json = profile.model_dump_json()
@@ -453,7 +453,8 @@ def _finalize_understanding(run_dir: Path, result,
 # ---------------------------------------------------------------------------
 
 
-def _load_profile(run_dir: Path) -> DataProfile:
+def _load_profile(run_dir: str | Path) -> DataProfile:
+    run_dir = Path(run_dir)
     path = run_dir / "metadata" / "data_profile.json"
     if not path.exists():
         raise FileNotFoundError(
@@ -461,7 +462,8 @@ def _load_profile(run_dir: Path) -> DataProfile:
     return DataProfile(**json.loads(path.read_text(encoding="utf-8")))
 
 
-def _load_context(run_dir: Path) -> BusinessContext:
+def _load_context(run_dir: str | Path) -> BusinessContext:
+    run_dir = Path(run_dir)
     path = run_dir / "knowledge" / "business_context.json"
     if not path.exists():
         return BusinessContext(file_name="", generic_mode=True)
