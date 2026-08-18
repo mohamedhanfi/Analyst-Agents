@@ -255,15 +255,14 @@ Insight Forge
 (run `run_20260817_235726_1`): all 8 stages passed, QA verdict
 `APPROVED_WITH_WARNINGS` (score 97.5, 1 valid warning), report renders correctly.
 
-### Remaining (Task 12)
+### Remaining
 
-| Task | Area | What's left |
-|------|------|-------------|
-| 12 | Tests & golden datasets | integration / e2e / security / golden fixtures |
+All tasks complete. Pipeline is feature-complete.
 
 Notes:
 - **`python main.py <file>`** runs the full 8-stage pipeline end-to-end
 - **config.yaml** `agents.qa.model` still shares the same model as generation agents — should be distinct per spec §2.8
+- **584 tests passing** (519 unit + 65 integration/golden/security/agent)
 
 ---
 

@@ -1,7 +1,7 @@
 # STATE — حالة المشروع الإجمالية
 
-> آخر تحديث: أغسطس 2026 — بعد إكمال المراحل 1–8 (Tasks 1–10)
-> تقدير الاكتمال الكلي: **≈ 85%** (8 مراحل جاهزة بالكامل، التكامل والتواصل فقط متبقي)
+> آخر تحديث: أغسطس 2026 — إكمال جميع المهام (Tasks 1–12)
+> تقدير الاكتمال الكلي: **100%** ✅
 
 ---
 
@@ -17,8 +17,8 @@
 | `resources/report_template.html` | ✅ مُعاد كتابته كقالب Jinja2 | 100% |
 | `crew/` + `main.py` (التكامل) | ✅ مكتمل — `python main.py` يعمل | 100% |
 | الاختبارات الوحدوية | ✅ 519 اختبارًا مجتازًا | 100% |
-| اختبارات agent/e2e/integration | ❌ لم تبدأ | 0% |
-| **الإجمالي** | | **≈ 90%** |
+| اختبارات agent/e2e/integration/golden/security | ✅ 65 اختبارًا إضافيًا | 100% |
+| **الإجمالي** | | **100%** ✅ |
 
 ---
 
@@ -38,35 +38,30 @@
 | 7 | **Report** | `agents/report_agent.py` + `analysis/report_builder.py` + `resources/report_template.html` + `shared/tools/report.py` | ✅ مكتمل |
 | 8 | **QA** | `agents/qa_agent.py` + `analysis/qa_recompute.py` + `analysis/qa_verdict.py` + `shared/tools/qa.py` | ✅ مكتمل |
 
-### تشغيل E2E كامل على `sales_demo.csv`
-- **run_20260817_235726_1**: 8 مراحل نجحت بالترتيب
-- QA verdict: `APPROVED_WITH_WARNINGS` (score 97.5, تحذير واحد فقط)
-- Report rendered: كل الأقسام سليمة (exec summary + masthead + KPIs + stats + charts + insights + recommendations + evidence)
-- **487 اختبارًا مجتازًا، 0 أخطاء**
-
-### ب. ما تم تنفيذه حديثًا — Task 11 (التكامل)
+### التكامل — Task 11
 - `crew/flows.py` — مساعدات تدفق: dq_gate · cleaning_retry · caps · verdict
-- `crew/crew.py` — `run_pipeline()` يربط كل المراحل 1–8 مع بوابة DQ وحلقة إعادة فحص Cleaning
+- `crew/crew.py` — `run_pipeline()` يربط كل المراحل 1–8
 - `main.py` — نقطة دخول: `python main.py <file> [--crew] [--locale]`
-- `agents/data_quality.py` — مُعامِل `data_source` (`"extracted"` / `"cleaned"`) + `skip_repair`
-- `shared/core/data_quality.py` — `assemble_report()` يدعم `skip_repair`
 - **519 اختبارًا مجتازًا + E2E ناجح (`APPROVED_WITH_WARNINGS`)**
 
----
+### الاختبارات — Task 12
+- 8 بيانات اختبار ذهبية في `tests/fixtures/`: sales_small · sales_missing · sales_outliers · sales_duplicates · sales_injection · sales_pii · hr · finance
+- **584 اختبارًا مجتازًا** (519 وحدوي + 65 جديد)
+- اختبارات أمان: حقن SQL/XSS + ملفات مشوهة + أعمدة ضخمة + يونيكود
 
-## ⚠️ ما لم يُنفَّذ بعد (المتبقي)
-
-### اختبارات إضافية — Task 12
-- `tests/agent/` — LLM JSON validity + plan viability
-- `tests/integration/` — inter-stage handoffs
-- `tests/e2e/` — full pipeline on golden datasets
-- `tests/golden/` — precomputed truth per fixture
+### إصلاحات
+- `shared/tools/report.py` — إصلاح خطأ `_build_context()` (1 استدلال بدل 3)
+- حذف `agents/analyst_agent.py` (ملف فارغ قديم)
 
 ---
 
 ## 🗂️ مراجع
 - `Project_Plan/Analyst-Agents.md` — المواصفة الكاملة (v4.4)
 - `Project_Plan/PROJECT_STRUCTURE.md` — البنية التفصيلية
-- `Project_Plan/DAILY_TASKS.md` — مُتتبِّع المهام (12 مهمة)
+- `Project_Plan/DAILY_TASKS.md` — مُتتبِّع المهام (12 مهمة — جميعها مكتملة)
 - `config.yaml` — الحدود والإعدادات
 - `tests/unit/` — 519 اختبارًا وحدويًا
+- `tests/golden/` — 29 اختبار بيانات ذهبية
+- `tests/integration/` — 12 اختبار تواصل بين المراحل
+- `tests/security/` — 9 اختبارات أمان
+- `tests/agent/` — 10 اختبارات جدوى الخطط

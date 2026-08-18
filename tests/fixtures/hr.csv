@@ -1,0 +1,81 @@
+employee_id,name,department,salary,hire_date,performance_score
+EMP-1000,Employee_0,Engineering,107351.58,2022-06-13,Excellent
+EMP-1001,Employee_1,Marketing,96258.34,2023-06-09,Average
+EMP-1002,Employee_2,Sales,88873.3,2021-05-04,Average
+EMP-1003,Employee_3,Finance,69625.93,2022-07-20,Average
+EMP-1004,Employee_4,HR,66182.8,2023-02-17,Good
+EMP-1005,Employee_5,Operations,55641.68,2020-07-23,Good
+EMP-1006,Employee_6,Engineering,93300.52,2022-11-03,Average
+EMP-1007,Employee_7,Marketing,84877.03,2022-12-04,Average
+EMP-1008,Employee_8,Sales,79341.25,2022-07-11,Good
+EMP-1009,Employee_9,Finance,76153.2,2021-07-22,Average
+EMP-1010,Employee_10,HR,65197.44,2022-01-27,Average
+EMP-1011,Employee_11,Operations,54305.48,2022-10-26,Needs Improvement
+EMP-1012,Employee_12,Engineering,96984.84,2023-04-22,Good
+EMP-1013,Employee_13,Marketing,84706.9,2022-09-10,Excellent
+EMP-1014,Employee_14,Sales,84644.82,2022-04-25,Good
+EMP-1015,Employee_15,Finance,102278.92,2020-01-05,Good
+EMP-1016,Employee_16,HR,83977.92,2023-02-20,Needs Improvement
+EMP-1017,Employee_17,Operations,74584.11,2023-04-19,Needs Improvement
+EMP-1018,Employee_18,Engineering,94983.51,2020-11-05,Excellent
+EMP-1019,Employee_19,Marketing,89190.77,2023-03-08,Excellent
+EMP-1020,Employee_20,Sales,75509.2,2023-02-28,Good
+EMP-1021,Employee_21,Finance,102060.21,2022-09-22,Needs Improvement
+EMP-1022,Employee_22,HR,71911.2,2023-09-24,Needs Improvement
+EMP-1023,Employee_23,Operations,74916.24,2023-08-24,Average
+EMP-1024,Employee_24,Engineering,111709.4,2022-11-27,Needs Improvement
+EMP-1025,Employee_25,Marketing,83503.07,2020-08-09,Average
+EMP-1026,Employee_26,Sales,64207.28,2020-06-11,Good
+EMP-1027,Employee_27,Finance,74410.3,2021-12-13,Good
+EMP-1028,Employee_28,HR,54087.44,2023-06-14,Needs Improvement
+EMP-1029,Employee_29,Operations,49867.97,2023-07-27,Excellent
+EMP-1030,Employee_30,Engineering,116694.77,2023-10-25,Needs Improvement
+EMP-1031,Employee_31,Marketing,60221.1,2023-05-12,Needs Improvement
+EMP-1032,Employee_32,Sales,74837.72,2021-09-24,Needs Improvement
+EMP-1033,Employee_33,Finance,77325.42,2020-08-14,Needs Improvement
+EMP-1034,Employee_34,HR,62924.21,2021-07-22,Needs Improvement
+EMP-1035,Employee_35,Operations,75586.25,2020-09-20,Needs Improvement
+EMP-1036,Employee_36,Engineering,104114.91,2020-01-22,Needs Improvement
+EMP-1037,Employee_37,Marketing,65088.73,2020-03-15,Average
+EMP-1038,Employee_38,Sales,69268.64,2022-08-07,Average
+EMP-1039,Employee_39,Finance,100352.26,2023-05-13,Average
+EMP-1040,Employee_40,HR,79134.6,2020-01-16,Average
+EMP-1041,Employee_41,Operations,54726.66,2020-11-03,Excellent
+EMP-1042,Employee_42,Engineering,121106.56,2021-01-07,Good
+EMP-1043,Employee_43,Marketing,64733.29,2021-02-22,Needs Improvement
+EMP-1044,Employee_44,Sales,80481.27,2021-06-25,Excellent
+EMP-1045,Employee_45,Finance,101056.16,2020-05-06,Excellent
+EMP-1046,Employee_46,HR,82188.83,2023-11-19,Needs Improvement
+EMP-1047,Employee_47,Operations,76244.12,2021-02-07,Excellent
+EMP-1048,Employee_48,Engineering,109116.67,2020-11-10,Excellent
+EMP-1049,Employee_49,Marketing,73020.14,2022-11-14,Excellent
+EMP-1050,Employee_50,Sales,73708.63,2023-01-11,Needs Improvement
+EMP-1051,Employee_51,Finance,72485.4,2023-11-12,Good
+EMP-1052,Employee_52,HR,66153.33,2022-09-24,Needs Improvement
+EMP-1053,Employee_53,Operations,61946.21,2022-12-27,Average
+EMP-1054,Employee_54,Engineering,116456.38,2022-02-27,Needs Improvement
+EMP-1055,Employee_55,Marketing,69144.88,2023-10-15,Average
+EMP-1056,Employee_56,Sales,57004.5,2021-06-28,Needs Improvement
+EMP-1057,Employee_57,Finance,77015.09,2022-05-26,Average
+EMP-1058,Employee_58,HR,80610.4,2020-05-23,Good
+EMP-1059,Employee_59,Operations,50568.39,2023-07-24,Good
+EMP-1060,Employee_60,Engineering,108803.94,2023-12-21,Needs Improvement
+EMP-1061,Employee_61,Marketing,89734.98,2021-05-03,Needs Improvement
+EMP-1062,Employee_62,Sales,80212.55,2022-11-10,Needs Improvement
+EMP-1063,Employee_63,Finance,91522.6,2022-07-12,Average
+EMP-1064,Employee_64,HR,74842.79,2022-05-09,Good
+EMP-1065,Employee_65,Operations,51619.68,2020-06-07,Good
+EMP-1066,Employee_66,Engineering,85098.2,2022-08-24,Average
+EMP-1067,Employee_67,Marketing,96769.15,2022-04-27,Good
+EMP-1068,Employee_68,Sales,68630.84,2021-01-10,Average
+EMP-1069,Employee_69,Finance,69934.42,2022-09-02,Good
+EMP-1070,Employee_70,HR,72730.76,2020-08-25,Excellent
+EMP-1071,Employee_71,Operations,65221.93,2023-08-16,Average
+EMP-1072,Employee_72,Engineering,84757.27,2023-05-02,Excellent
+EMP-1073,Employee_73,Marketing,90829.34,2020-08-13,Excellent
+EMP-1074,Employee_74,Sales,61310.45,2022-10-26,Excellent
+EMP-1075,Employee_75,Finance,110241.52,2023-09-04,Good
+EMP-1076,Employee_76,HR,77210.04,2023-08-13,Average
+EMP-1077,Employee_77,Operations,73805.0,2020-05-14,Excellent
+EMP-1078,Employee_78,Engineering,121010.53,2021-11-07,Average
+EMP-1079,Employee_79,Marketing,84766.06,2021-04-06,Excellent

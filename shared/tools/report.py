@@ -55,15 +55,14 @@ def load_report_artifacts_tool(run_dir: str) -> str:
 # ------------------------------------------------------------------
 
 
-def _render_exec_summary(run_dir: str) -> str:
-    """Return the executive summary HTML from the run's context."""
-    ctx = _build_context(Path(run_dir))
+def _render_exec_summary(ctx: dict) -> str:
+    """Return the executive summary HTML from the already-built context."""
     return ctx.get("exec_summary", "") or (
         '<p class="text-secondary">No executive summary provided.</p>')
 
 
 _SECTION_RENDERERS = {
-    "executive_summary": lambda ctx, run_dir: _render_exec_summary(run_dir),
+    "executive_summary": lambda ctx, run_dir: _render_exec_summary(ctx),
     "kpis": lambda ctx, run_dir: render_kpis(ctx.get("kpis", [])),
     "stats": lambda ctx, run_dir: render_stats(ctx.get("stats", [])),
     "charts": lambda ctx, run_dir: render_charts(
@@ -92,7 +91,7 @@ def render_report_section_tool(section_id: str, run_dir: str) -> str:
             {"error": f"unknown section_id {section_id!r}",
              "valid": sorted(_SECTION_RENDERERS.keys())},
             ensure_ascii=False, indent=2)
-    ctx = _build_context(Path(run_dir))
+    ctx = _build_context(Path(run_dir), "", "en")
     html = _SECTION_RENDERERS[section_id](ctx, run_dir)
     return _json({"section_id": section_id, "html": html})
 
