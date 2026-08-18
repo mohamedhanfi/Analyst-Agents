@@ -55,9 +55,9 @@ class TestE2eSalesSmall:
         assert run_result.get("status") != "failed"
 
     def test_all_stages_present(self, run_result: dict) -> None:
-        stages = run_result.get("stages", {})
-        for i in range(1, 9):
-            key = f"stage_{i}"
+        stages = run_result.get("stage_results", {})
+        for key in ["ingestion", "understanding", "data_quality", "cleaning",
+                    "analysis", "insights", "report", "qa"]:
             assert key in stages, f"Missing {key}"
 
     def test_master_manifest_exists(self, run_result: dict) -> None:
@@ -65,7 +65,7 @@ class TestE2eSalesSmall:
         manifest = run_dir / "master_manifest.json"
         assert manifest.exists(), f"master_manifest.json not found in {run_dir}"
         data = json.loads(manifest.read_text(encoding="utf-8"))
-        assert "stages" in data or "pipeline" in data
+        assert "stage_results" in data or "pipeline" in data
 
     def test_report_html_exists(self, run_result: dict) -> None:
         run_dir = Path(run_result.get("run_dir", ""))
@@ -101,8 +101,12 @@ class TestE2eSalesMissing:
         assert run_result.get("status") != "failed"
 
     def test_cleaning_stage_runs(self, run_result: dict) -> None:
-        stages = run_result.get("stages", {})
-        assert "stage_4" in stages
+        stages = run_result.get("stage_results", {})
+        assert "cleaning" in stages
+
+    def test_duration_tracked(self, run_result: dict) -> None:
+        assert "duration_s" in run_result
+        assert run_result["duration_s"] >= 0
 
 
 class TestE2eSalesOutliers:
@@ -209,8 +213,8 @@ class TestE2eCostCaps:
         return result
 
     def test_duration_tracked(self, run_result: dict) -> None:
-        assert "duration_seconds" in run_result
-        assert run_result["duration_seconds"] >= 0
+        assert "duration_s" in run_result
+        assert run_result["duration_s"] >= 0
 
     def test_total_cost_within_cap(self, run_result: dict) -> None:
         cost = run_result.get("total_cost", 0.0)

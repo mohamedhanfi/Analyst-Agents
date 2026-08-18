@@ -19,8 +19,13 @@ import pandas as pd
 
 from analysis.dsl_executor import execute_plan
 from analysis.evidence import EvidenceRegistry
+from shared.core.semantic_guards import IDENTIFIER_NAME_RE
 
 _TOLERANCE = 0.0001  # 0.01%
+
+# 8.1: functions that value-aggregate — never allowed on identifier columns.
+_VALUE_FUNCTIONS = frozenset({"sum", "mean", "median", "std", "min", "max",
+                              "correlation"})
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +287,68 @@ def validate_references(run_dir: Path) -> List[QaCheck]:
 
 
 # ---------------------------------------------------------------------------
+# Semantic relevance (8.1) — hard-fail, independent of numeric accuracy
+# ---------------------------------------------------------------------------
+
+
+def check_semantic_relevance(run_dir: Path) -> List[QaCheck]:
+    """8.1: last line of defense — no surfaced KPI/insight may value-
+    aggregate an identifier-like column, regardless of how accurate the
+    numbers are. Critical severity -> NEEDS_REVISION (§2.8)."""
+    checks: List[QaCheck] = []
+    understanding = _load_json(run_dir / "metadata"
+                               / "dataset_understanding.json")
+    columns = understanding.get("columns") or []
+    idents = {str(c.get("name")) for c in columns
+              if c.get("role") == "identifier"}
+
+    def _flagged(col: Any) -> bool:
+        if not col:
+            return False
+        return col in idents or bool(IDENTIFIER_NAME_RE.search(str(col)))
+
+    kpis = _load_json(run_dir / "outputs" / "kpis.json", {"kpis": []})
+    kpis = kpis.get("kpis", []) if isinstance(kpis, dict) else []
+    kpi_ops: Dict[str, Dict[str, Any]] = {}
+    for kpi in kpis:
+        op = kpi.get("operation") or {}
+        kpi_ops[kpi.get("kpi_id")] = op
+        if op.get("function") not in _VALUE_FUNCTIONS:
+            continue
+        cols = [op.get("column"), op.get("column_a"), op.get("column_b")]
+        flagged = [c for c in cols if _flagged(c)]
+        if flagged:
+            checks.append(QaCheck(
+                check="semantic_identifier_reference",
+                severity="critical",
+                message=(f"KPI {kpi.get('kpi_id', '?')} "
+                         f"({kpi.get('name', '')}) value-aggregates "
+                         f"identifier-like column '{flagged[0]}'")))
+
+    insights_raw = _load_json(run_dir / "outputs" / "insights.json",
+                              {"insights": []})
+    insights = insights_raw.get("insights", []) \
+        if isinstance(insights_raw, dict) else []
+    for ins in insights:
+        for kpi_id in ins.get("related_kpis") or []:
+            op = kpi_ops.get(kpi_id) or {}
+            if op.get("function") not in _VALUE_FUNCTIONS:
+                continue
+            cols = [op.get("column"), op.get("column_a"),
+                    op.get("column_b")]
+            flagged = [c for c in cols if _flagged(c)]
+            if flagged:
+                checks.append(QaCheck(
+                    check="semantic_identifier_reference",
+                    severity="critical",
+                    message=(f"Insight {ins.get('insight_id', '?')} rests "
+                             f"on KPI {kpi_id} which value-aggregates "
+                             f"identifier-like column '{flagged[0]}'")))
+
+    return checks
+
+
+# ---------------------------------------------------------------------------
 # Full QA recomputation + validation
 # ---------------------------------------------------------------------------
 
@@ -304,6 +371,9 @@ def run_all_checks(run_dir: Path) -> List[QaCheck]:
 
     # 2. Validate references
     checks.extend(validate_references(run_dir))
+
+    # 3. Semantic relevance hard-fail (8.1)
+    checks.extend(check_semantic_relevance(run_dir))
 
     return checks
 

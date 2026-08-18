@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from analysis.qa_recompute import run_all_checks
 from analysis.qa_verdict import run_verdict
 from shared.llm import build_llm
+from shared.prompt_guard import data_note
 from shared.logger import RunLogger
 from shared.utils import init_run_layout, load_config
 
@@ -81,7 +82,8 @@ def build_qa_task(agent: Any, run_dir: str | Path) -> Any:
             "they reference?\n"
             "3. Are there any obvious logical gaps or contradictions?\n\n"
             "Return a JSON object {\"readability_ok\": bool, "
-            "\"logic_ok\": bool, \"notes\": [...]} and nothing else."
+            "\"logic_ok\": bool, \"notes\": [...]} and nothing else.\n"
+            + data_note()
         ),
         agent=agent,
         expected_output='JSON {"readability_ok": bool, "logic_ok": bool, '
@@ -96,21 +98,55 @@ def build_qa_task(agent: Any, run_dir: str | Path) -> Any:
 
 def _run_llm_review(run_dir: Path, cfg: Dict[str, Any],
                     log: RunLogger) -> Dict[str, Any]:
-    """Run the LLM review via CrewAI."""
-    agent = build_qa_agent(cfg)
-    task = build_qa_task(agent, run_dir)
+    """LLM review via a direct call (no CrewAI) with schema validation."""
+    from pydantic import BaseModel, Field
+    from shared.llm import complete_json
 
-    from crewai import Crew
-    crew = Crew(agents=[agent], tasks=[task], verbose=False)
-    result = crew.kickoff()
+    class QaReview(BaseModel):
+        readability_ok: bool
+        logic_ok: bool
+        notes: List[str] = Field(default_factory=list)
 
-    try:
-        review = json.loads(str(result))
-    except (json.JSONDecodeError, TypeError):
+    insights_raw = {}
+    insights_path = run_dir / "outputs" / "insights.json"
+    if insights_path.exists():
+        try:
+            insights_raw = json.loads(insights_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    insights = insights_raw.get("insights", [])
+    recs = insights_raw.get("recommendations", [])
+
+    system = (
+        "You are the QA auditor of a business intelligence pipeline. "
+        "Review insights and recommendations for logical coherence. "
+        "Return ONLY JSON: {\"readability_ok\": bool, \"logic_ok\": bool, "
+        "\"notes\": [string, ...]}."
+    )
+    user = (
+        "Insights (" + str(len(insights)) + "):\n"
+        f"{json.dumps(insights, ensure_ascii=False, indent=2)}\n\n"
+        "Recommendations (" + str(len(recs)) + "):\n"
+        f"{json.dumps(recs, ensure_ascii=False, indent=2)}\n\n"
+        "Check:\n"
+        "1. Do the evidence_ids in each insight actually support the claim "
+        "type?\n"
+        "2. Do the recommendations logically follow from the insights they "
+        "reference?\n"
+        "3. Are there any obvious logical gaps or contradictions?\n\n"
+        + data_note()
+    )
+    review, warnings = complete_json(cfg, "qa", system, user,
+                                     schema=QaReview)
+    if review is None:
         review = {"readability_ok": True, "logic_ok": True,
-                  "notes": [f"LLM output parse failed: {str(result)[:200]}"]}
-    log.info(STAGE, f"LLM review: logic_ok={review.get('logic_ok')}, "
-             f"readability_ok={review.get('readability_ok')}")
+                  "notes": ["llm_review_failed_fallback_deterministic"]}
+        log.info(STAGE, "LLM review failed — falling back to deterministic",
+                 reasons=warnings)
+    else:
+        log.info(STAGE,
+                 f"LLM review: logic_ok={review.get('logic_ok')}, "
+                 f"readability_ok={review.get('readability_ok')}")
     return review
 
 

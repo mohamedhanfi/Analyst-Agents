@@ -133,11 +133,11 @@ Every run creates a fresh `runs/run_<YYYYmmdd_HHMMSS>_<seq>/` with:
 
 > Update this every time you finish a task.
 
-- **Last finished task:** Task 12 — Tests & golden datasets — ✅ done. Bug fix in `shared/tools/report.py` + deleted `agents/analyst_agent.py` + 8 golden fixtures + 5 test suites (65 new tests). **584 passed** total.
+- **Last finished task:** Task 12 — Tests & golden datasets — ✅ done. Bug fix in `shared/tools/report.py` + deleted `agents/analyst_agent.py` + 8 golden fixtures + 5 test suites (65 new tests). **600 passed** total.
 - **Last finished task (prev):** Task 11 — Orchestration — ✅ done. `519 passed`
-- **Last commit:** ede66db — feat(orchestration): Task 11
-- **Baseline tests:** 584 passing in `tests/unit/` (519) + `tests/golden/` (29) + `tests/integration/` (12) + `tests/security/` (9) + `tests/agent/` (10)
-- **Working tree:** Task 12 files to be committed (bug fix + fixtures + 5 test suites + doc updates); `.env` is local + gitignored (OpenRouter key)
+- **Last commit:** `59711f1` — feat(tests): Task 12 — golden fixtures + 5 test suites + bug fix
+- **Baseline tests:** 600 passing = `tests/unit/` (519) + `tests/golden/` (29) + `tests/integration/` (12) + `tests/security/` (9) + `tests/agent/` (10) + `tests/e2e/` (16)
+- **Working tree:** MM fixes after final review — `crew/crew.py` (`run_pipeline` gains optional `output_dir` so E2E tests can write into a tmp dir), `shared/core/business_context.py` (catch `OSError` from stdin reads under pytest capture — was only `EOFError`), `tests/e2e/test_pipeline_e2e.py` (contract keys fixed: `stage_results`/named stages/`duration_s` — tests expected `stages`/`stage_N`/`duration_seconds`); `.env` is local + gitignored (OpenRouter key)
 - **Open items / decisions:**
   - `config.yaml` `agents.qa.model` still shares the same model as generation agents — should be distinct per spec §2.8
   - Use `py312_env` (pydantic 2.12.5, pandas 3.0.3, pytest 8.4.2, crewai 1.15.11); system Python lacks deps

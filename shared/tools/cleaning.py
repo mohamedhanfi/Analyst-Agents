@@ -174,6 +174,19 @@ def iqr_outlier_tool(cleaned_csv: str, understanding_json: str,
                            "error": "mode must be 'flag' or 'drop'"},
                           ensure_ascii=False, indent=2)
     understanding = _load_understanding(understanding_json)
+    column_meta = next((c for c in understanding.columns
+                        if c.name == column), None)
+    if column_meta is None:
+        return json.dumps({"column": column, "mode": mode,
+                           "error": f"unknown column '{column}'"},
+                          ensure_ascii=False, indent=2)
+    if column_meta.role in ("identifier", "categorical"):
+        # 3.1: outliers are only meaningful for measures.
+        return json.dumps({"column": column, "mode": mode,
+                           "outliers": 0, "ops": [],
+                           "error": "outliers are only meaningful for "
+                                    "measure columns"},
+                          ensure_ascii=False, indent=2)
     df = _load_df(cleaned_csv)
     _, log = execute_strategy(
         df, {"columns": [], "deduplicate": False, "outliers": {column: mode}},

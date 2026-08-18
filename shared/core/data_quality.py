@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from shared.core.semantic_guards import NEGATIVE_ALLOWED_RE, is_mixed_unit
 from shared.schemas import (
     BusinessContext,
     DataProfile,
@@ -119,10 +120,14 @@ def check_invalid_values(understanding: DatasetUnderstanding, df: pd.DataFrame,
         series = df[name]
         if col.role == "measure":
             numeric = _to_numeric(series)
-            if (numeric < 0).any():
+            lowered = name.lower().replace(" ", "")
+            # 3.2: negative values are only invalid when the measure
+            # semantics forbid them — temperature_celsius, balance, growth
+            # etc. may legitimately be negative.
+            if (numeric < 0).any() \
+                    and not NEGATIVE_ALLOWED_RE.search(lowered):
                 issues.append(DqIssue(SEV_HIGH, CAT_INVALID, name,
                                       "negative"))
-            lowered = name.lower().replace(" ", "")
             if "percent" in lowered or "pct" in lowered or "%" in name:
                 if (numeric > percent_max).any():
                     issues.append(DqIssue(SEV_HIGH, CAT_INVALID, name,
@@ -144,6 +149,13 @@ def check_invalid_values(understanding: DatasetUnderstanding, df: pd.DataFrame,
                   & (parsed.dt.date > today + horizon)).any():
                 issues.append(DqIssue(SEV_MEDIUM, CAT_INVALID, name,
                                       "future_dates"))
+        elif col.role not in ("measure", "temporal"):
+            # 2.4: currency/unit strings ("$100", "EGP 500", "100 kg") in a
+            # non-measure column — a DQ flag so numeric coercion never
+            # silently strips units downstream.
+            if is_mixed_unit(series):
+                issues.append(DqIssue(SEV_MEDIUM, CAT_INVALID, name,
+                                      "mixed_units"))
     return issues
 
 

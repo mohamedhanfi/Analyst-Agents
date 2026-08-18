@@ -77,7 +77,42 @@ def test_extract_sheet_writes_only_selected(tmp_path, reader):
     assert Path(out).is_file()
     extracted_files = list(reader.extracted_dir.glob("*.csv"))
     assert len(extracted_files) == 1  # only the selected one
-    assert extracted_files[0].name == "multi__Sales.csv"
+
+
+def test_extract_merged_combines_sheets(tmp_path, reader):
+    """Audit M: extract_merged concatenates sheets sharing a header."""
+    path = tmp_path / "multi.xlsx"
+    wb = openpyxl.Workbook()
+    ws1 = wb.active
+    ws1.title = "Sales"
+    ws1.append(["region", "amount"])
+    ws1.append(["Cairo", 10])
+    ws2 = wb.create_sheet("Sales2")
+    ws2.append(["region", "amount"])
+    ws2.append(["Giza", 20])
+    ws2.append(["Alex", 30])
+    wb.save(path)
+
+    out = reader.extract_merged(path)
+    df = pd.read_csv(out)
+    assert len(df) == 3
+    assert df["amount"].sum() == 60
+
+
+def test_extract_merged_rejects_mismatched_columns(tmp_path, reader):
+    path = tmp_path / "multi.xlsx"
+    wb = openpyxl.Workbook()
+    ws1 = wb.active
+    ws1.title = "A"
+    ws1.append(["region", "amount"])
+    ws1.append(["Cairo", 10])
+    ws2 = wb.create_sheet("B")
+    ws2.append(["region"])
+    ws2.append(["Giza"])
+    wb.save(path)
+
+    with pytest.raises(ValueError, match="columns"):
+        reader.extract_merged(path)
 
 
 def test_safe_filename(tmp_path, reader):

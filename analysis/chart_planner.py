@@ -16,7 +16,7 @@ from analysis.dsl_executor import growth_series
 from analysis.evidence import EvidenceRegistry
 from analysis.generic._helpers import measure_columns
 from shared.schemas import (AnalysisPlan, ChartKind, ChartMetadata,
-                            DatasetUnderstanding, KpiCandidate)
+                            DatasetUnderstanding, Insight, KpiCandidate)
 
 THIN_THRESHOLD = 10          # rows below this => downgrade + reliability low_n
 RULE = {                     # rule-table reference (spec §2.5)
@@ -367,10 +367,114 @@ _STRENGTH = {
 }
 
 
-def rank_candidates(candidates: List[ChartMetadata]) -> List[ChartMetadata]:
-    """Rank chart candidates by evidence strength (stable on chart_id)."""
-    return sorted(candidates, key=lambda c: (-_STRENGTH.get(c.kind, 0),
+def rank_candidates(candidates: List[ChartMetadata],
+                    novelty_penalty: float = 0.0
+                    ) -> List[ChartMetadata]:
+    """Rank chart candidates by evidence strength (stable on chart_id).
+
+    Task B.2: when ``novelty_penalty`` > 0, each repeat of a kind that was
+    already selected earlier in the ranking loses a fraction of its base
+    score (final = base * (1 - penalty)) — a bias toward variety, not a
+    hard cap. Ranking order stays fully deterministic.
+    """
+    base = sorted(candidates, key=lambda c: (-_STRENGTH.get(c.kind, 0),
                                              c.chart_id))
+    if novelty_penalty <= 0:
+        return base
+    seen: Dict[str, int] = {}
+    scored: List[Tuple[float, ChartMetadata]] = []
+    for chart in base:
+        repeats = seen.get(chart.kind, 0)
+        seen[chart.kind] = repeats + 1
+        effective = _STRENGTH.get(chart.kind, 0) * (1 - novelty_penalty
+                                                    if repeats else 1.0)
+        scored.append((effective, chart))
+    return [chart for _, chart in sorted(
+        scored, key=lambda t: (-t[0], t[1].chart_id))]
+
+
+def _claim_kind_fits(df: pd.DataFrame, understanding: DatasetUnderstanding,
+                     chart: ChartMetadata, kind: str) -> bool:
+    """Light feasibility check for the insight-linked override (B.3) —
+    equivalent to the shape rules without needing the KPI candidate."""
+    if kind in ("scatter", "heatmap"):
+        numerics = [c for c in understanding.measures if c in df.columns]
+        return len(numerics) >= 2
+    if kind == "line":
+        return bool(understanding.has_temporal_data
+                    or understanding.temporal_columns)
+    if kind in ("bar", "barh", "lollipop"):
+        return any(c in (understanding.dimensions or []) for c in
+                   (chart.columns or []))
+    return True
+
+
+def apply_insight_kind_overrides(charts: List[ChartMetadata],
+                                 insights: List["Insight"],
+                                 df: pd.DataFrame,
+                                 understanding: DatasetUnderstanding,
+                                 ) -> Tuple[List[ChartMetadata],
+                                            List[Dict[str, str]]]:
+    """Task B.3: priority override — chart kind follows the insight claim
+    type, not just the dtype shape table (which stays the fallback).
+
+    Mapping (over the existing deterministic table):
+      CORRELATIONAL claim  -> scatter (or equivalent)
+      trend claim (time)   -> line   (DESCRIPTIVE with growth_rate evidence)
+      COMPARATIVE claim    -> bar / lollipop
+      DESCRIPTIVE          -> unchanged (dtype table already produces
+                              histograms for distributions)
+
+    Returns (updated charts, applied [{chart_id, kind, reason}]) — charts
+    are deep-copied; the caller re-renders the affected SVGs.
+    """
+    by_kpi: Dict[str, List["Insight"]] = {}
+    for insight in insights:
+        for kpi_id in (insight.related_kpis or []):
+            by_kpi.setdefault(kpi_id, []).append(insight)
+
+    def _is_trend_claim(insight) -> bool:
+        return (insight.claim_type == "DESCRIPTIVE"
+                and "growth_rate" in (insight.required_evidence or []))
+
+    applied: List[Dict[str, str]] = []
+    out: List[ChartMetadata] = []
+    for chart in charts:
+        chart = chart.model_copy(deep=True)
+        claims = by_kpi.get(chart.kpi_id or "", [])
+        if claims:
+            chosen: Optional[str] = None
+            chosen_insight = None
+            for insight in claims:
+                if insight.claim_type == "CORRELATIONAL":
+                    chosen, chosen_insight = "scatter", insight
+                    break
+            if chosen is None:
+                for insight in claims:
+                    if _is_trend_claim(insight):
+                        chosen, chosen_insight = "line", insight
+                        break
+            if chosen is None:
+                for insight in claims:
+                    if insight.claim_type == "COMPARATIVE":
+                        chosen, chosen_insight = "bar", insight
+                        break
+            if (chosen is not None and chosen != chart.kind
+                    and chosen in CHART_KINDS
+                    and _claim_kind_fits(df, understanding, chart, chosen)):
+                old_kind = chart.kind
+                chart.kind = chosen
+                chart.reason = (f"{chart.reason}; insight_linked: "
+                                f"{chosen_insight.claim_type} -> {chosen} "
+                                f"(insight {chosen_insight.insight_id})")
+                applied.append({
+                    "chart_id": chart.chart_id,
+                    "from": old_kind, "to": chosen,
+                    "reason": f"insight {chosen_insight.insight_id} "
+                              f"({chosen_insight.claim_type})",
+                })
+        out.append(chart)
+    return out, applied
 
 
 def truncate(candidates: List[ChartMetadata],
@@ -394,6 +498,7 @@ def plan_charts(df: pd.DataFrame, plan: AnalysisPlan,
                 thin_threshold: int = THIN_THRESHOLD,
                 proposals: List[Dict[str, Any]] | None = None,
                 accepted_kinds: Dict[str, str] | None = None,
+                novelty_penalty: float = 0.0,
                 ) -> Tuple[List[ChartMetadata], bool]:
     """Plan all candidate charts from the KPI list + numeric/ordinal columns.
 
@@ -430,6 +535,6 @@ def plan_charts(df: pd.DataFrame, plan: AnalysisPlan,
     candidates.extend(_plan_measure_relation(
         df, registry, index, measures, candidates, thin_threshold))
     candidates = _dedupe(candidates)
-    ranked = rank_candidates(candidates)
+    ranked = rank_candidates(candidates, novelty_penalty=novelty_penalty)
     kept, truncated = truncate(ranked, max_chart_count)
     return kept, truncated

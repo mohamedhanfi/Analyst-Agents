@@ -70,3 +70,26 @@ def test_save_writes_json(tmp_path):
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["goal_summary"] == "goal"
     assert payload["context_confidence"] > 0
+
+
+def test_answer_log_records_identity():
+    answers = iter(["Sales analysis", "retail"])
+    ctx = BusinessContextGatherer(timeout_seconds=30,
+                                  input_func=lambda _: next(answers),
+                                  answered_by="tester-42") \
+        .gather("demo.csv")
+    assert ctx.answered_by == "tester-42"
+    assert len(ctx.answer_log) >= 2
+    assert ctx.answer_log[0]["answered_by"] == "tester-42"
+    assert "ts" in ctx.answer_log[0]
+    assert ctx.answer_log[0]["question"]
+
+
+def test_generic_mode_logs_timeout_identity():
+    ctx = BusinessContextGatherer(timeout_seconds=0,
+                                  input_func=lambda _: "",
+                                  answered_by="bot-runner") \
+        .gather("demo.csv")
+    assert ctx.generic_mode is True
+    assert ctx.answered_by == "bot-runner"
+    assert ctx.answer_log and ctx.answer_log[0]["question"] == "<timeout>"

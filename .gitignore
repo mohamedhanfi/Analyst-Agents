@@ -1,5 +1,6 @@
 ﻿# secrets — never committed
 .env
+.enc_key
 
 # python
 __pycache__/
@@ -11,10 +12,9 @@ runs/*
 !runs/.gitkeep
 !runs/_template/
 
-# flow review web tool — runtime data only
-tests/Flow_review/runs/
-tests/Flow_review/uploads/
-
 # cache (idempotency + run index)
 cache/*
 !cache/.gitkeep
+
+# web app — user uploads only
+uploads/

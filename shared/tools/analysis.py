@@ -128,14 +128,32 @@ def chart_planner_tool(csv_path: str, understanding_json: str,
             proposals = json.loads(proposals_json)
         except json.JSONDecodeError:
             proposals = []
+    # §2.5/task B.1: LLM chart-kind proposals are gated behind
+    # charts.enable_kind_proposals (now on by default); a per-call
+    # limits_json override can turn them off, and the legacy top-level
+    # enable_chart_kind_proposals key still works as a fallback.
+    from shared.utils import load_config
+    config = load_config(require_key=False)
+    gate = limits.get(
+        "enable_chart_kind_proposals",
+        bool(config.get("charts", {}).get(
+            "enable_kind_proposals",
+            config.get("enable_chart_kind_proposals", False))))
+    if not gate:
+        proposals = []
     from analysis.chart_planner import validate_proposed_kinds
     accepted, errors = validate_proposed_kinds(df, plan, understanding,
                                                proposals)
+    novelty_penalty = limits.get("novelty_penalty")
+    if novelty_penalty is None:
+        config = load_config(require_key=False)
+        novelty_penalty = config.get("charts", {}).get("novelty_penalty", 0.0)
     charts, truncated = plan_charts(df, plan, understanding, registry,
                                      max_chart_count=max_chart_count,
                                      thin_threshold=thin_threshold,
                                      proposals=proposals,
-                                     accepted_kinds=accepted)
+                                     accepted_kinds=accepted,
+                                     novelty_penalty=float(novelty_penalty))
     return _json({"charts": [c.model_dump() for c in charts],
                   "charts_truncated": truncated,
                   "proposal_errors": errors})

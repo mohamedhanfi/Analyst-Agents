@@ -32,6 +32,7 @@ from shared.core.cleaning import (
 from shared.core.data_quality import assemble_report
 from shared.llm import build_llm
 from shared.logger import RunLogger
+from shared.prompt_guard import data_note
 from shared.schemas import (
     BusinessContext,
     CleaningResult,
@@ -108,7 +109,8 @@ def build_cleaning_tasks(agent: Agent, run_dir: str | Path,
             "Step 3: keep calling until errors is empty.\n"
             "Return ONLY the final strategy JSON: {\"columns\": "
             "[{\"column\", \"action\"}], \"deduplicate\": bool, "
-            "\"outliers\": {column: \"flag\"|\"drop\"}}."
+            "\"outliers\": {column: \"flag\"|\"drop\"}}.\n"
+            + data_note()
         ),
         expected_output=(
             'The validated strategy JSON as returned by the tool. No prose.'

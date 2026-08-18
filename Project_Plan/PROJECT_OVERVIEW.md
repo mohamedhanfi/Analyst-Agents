@@ -220,7 +220,6 @@ Insight Forge
 │
 ├── tests/
 │   ├── unit/                      # [DONE] 34 files, 487 tests passing
-│   ├── Flow_review/               # [DONE] live web viewer (app.py) for the pipeline
 │   └── agent, integration, e2e, golden, fixtures, statistical, regression, security
 │                                  # [EMPTY] future test suites (Task 12)
 │
@@ -298,10 +297,10 @@ Add `--crew` to run a stage through the real CrewAI agent (requires the
 python -m agents.analysis runs\demo_crew --crew
 ```
 
-**Watch the pipeline live** (web viewer for stages 1–3):
+**Watch the pipeline live** (web viewer):
 
 ```
-python tests\Flow_review\app.py --demo
+python app.py
 ```
 
 ---

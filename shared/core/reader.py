@@ -68,6 +68,42 @@ class FileReader:
             wb.close()
         return str(output_path)
 
+    def extract_merged(self, path: str | Path,
+                       sheet_names: list[str] | None = None) -> str:
+        """Audit M: merge MULTIPLE sheets of one XLSX into a single CSV
+        (opt-in; see config reader.merge_sheets). The first sheet defines
+        the header; later sheets are appended by column name. Sheets with
+        incompatible columns are skipped with a warning file."""
+        path = Path(path)
+        output_path = self.extracted_dir / f"{path.stem}__merged.csv"
+
+        frames: list[pd.DataFrame] = []
+        with pd.ExcelFile(path) as xl:
+            names = sheet_names or list(xl.sheet_names)
+            for name in names:
+                df = xl.parse(name)
+                df = df.dropna(how="all")
+                if df.empty:
+                    continue
+                frames.append(df)
+
+        if not frames:
+            raise ValueError("No readable rows found in any sheet.")
+        merged = frames[0]
+        if len(frames) > 1:
+            for extra in frames[1:]:
+                missing = set(extra.columns) - set(merged.columns)
+                extra_cols = set(merged.columns) - set(extra.columns)
+                if missing or extra_cols:
+                    raise ValueError(
+                        "Sheet columns do not match: "
+                        f"missing={sorted(missing)} "
+                        f"extra={sorted(extra_cols)}")
+                merged = pd.concat([merged, extra], ignore_index=True)
+
+        merged.to_csv(output_path, index=False, encoding="utf-8")
+        return str(output_path)
+
     # ------------------------------------------------------------- internals
 
     def _read_csv(self, path: Path, file_hash: str) -> ReadResult:

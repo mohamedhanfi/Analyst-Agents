@@ -17,6 +17,7 @@ from analysis.generic._helpers import (
     mean_variance_variant,
     numeric_series,
 )
+from shared.core.semantic_guards import IDENTIFIER_NAME_RE
 from shared.schemas import DatasetUnderstanding, StatisticalResult
 
 
@@ -30,6 +31,13 @@ def _spearman(a: pd.Series, b: pd.Series):
     return float(rho), float(p)
 
 
+def _is_ordinal(understanding: DatasetUnderstanding, name: str) -> bool:
+    for column in understanding.columns:
+        if column.name == name:
+            return bool(column.ordinal)
+    return False
+
+
 def run_correlation(df: pd.DataFrame,
                     understanding: DatasetUnderstanding,
                     registry: EvidenceRegistry,
@@ -38,6 +46,11 @@ def run_correlation(df: pd.DataFrame,
     measures = measure_columns(understanding, df)
     for i, col_a in enumerate(measures):
         for col_b in measures[i + 1:]:
+            # 5.2: never surface a "strong correlation" between identifier-
+            # like columns, regardless of the role assigned upstream.
+            if IDENTIFIER_NAME_RE.search(col_a) \
+                    or IDENTIFIER_NAME_RE.search(col_b):
+                continue
             a = numeric_series(df, col_a)
             b = numeric_series(df, col_b)
             valid = a.index.intersection(b.index)
@@ -46,6 +59,8 @@ def run_correlation(df: pd.DataFrame,
             if n < 3 or not mean_variance_variant(a) \
                     or not mean_variance_variant(b):
                 continue
+            ordinal_pair = _is_ordinal(understanding, col_a) \
+                or _is_ordinal(understanding, col_b)
             for method, (statistic, p_value), name in (
                     ("pearson", _pearson(a, b), "pearson"),
                     ("spearman", _spearman(a, b), "spearman")):
@@ -54,6 +69,12 @@ def run_correlation(df: pd.DataFrame,
                 effect = statistic ** 2
                 eid = registry.add_value(statistic, aggregation="correlation",
                                          comparison=name)
+                extra = {"method": method}
+                # 5.3: ordinal scales (satisfaction, rating, ...) — rank
+                # correlation is the right test; the insight stage prefers
+                # the spearman entry for these pairs.
+                if ordinal_pair and method == "spearman":
+                    extra["recommended_method"] = "spearman"
                 results.append(StatisticalResult(
                     test_id=f"ST-CORR-{index:03d}",
                     category="correlation",
@@ -66,6 +87,6 @@ def run_correlation(df: pd.DataFrame,
                     effect_size=effect,
                     n=n,
                     evidence_id=eid,
-                    extra={"method": method},
+                    extra=extra,
                 ))
     return results

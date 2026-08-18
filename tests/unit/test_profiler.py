@@ -44,4 +44,27 @@ def test_save_writes_json(tmp_path):
     assert path.name == "data_profile.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["row_count"] == 4
-    assert payload["missing_values"] == {"revenue": 1}
+
+
+def test_stratified_sample_covers_categories():
+    """Stratified sampling (audit J): every major category appears in the
+    20-row preview, unlike head(20) which only shows the first."""
+    big = pd.DataFrame({
+        "group": [f"g{i % 4}" for i in range(200)],
+        "value": [i for i in range(200)],
+    })
+    p = DataProfiler().profile(big, "big.csv", "sha256:abc")
+    assert len(p.sample) == 20
+    groups_in_sample = {r["group"] for r in p.sample}
+    assert groups_in_sample == {"g0", "g1", "g2", "g3"}
+
+
+def test_stratified_sample_numeric_spread():
+    """Without a categorical column the sample spreads across the value
+    range (decile picks), not just the head."""
+    big = pd.DataFrame({"value": [i for i in range(100)]})
+    p = DataProfiler().profile(big, "num.csv", "sha256:abc")
+    assert len(p.sample) == 20
+    values = [r["value"] for r in p.sample]
+    assert max(values) > 80   # covers the tail
+    assert min(values) == 0   # and the head

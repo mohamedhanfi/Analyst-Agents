@@ -107,8 +107,10 @@
   /* ---------- Chart cards ---------- */
   .chart-card .card-header{background:var(--card-bg); font-weight:700; color:var(--navy); border-bottom:1px solid var(--line);}
   [data-theme="dark"] .chart-card .card-header{color:#d7e0f0;}
-  .chart-wrap{position:relative; height:280px;}
-  @media(max-width:767px){.chart-wrap{height:240px;}}
+  .chart-wrap{position:relative; width:100%;}
+  .chart-figure{height:280px;}
+  .chart-static{display:none; max-width:100%;}
+  @media(max-width:767px){.chart-figure{height:240px;}}
   .card{border:1px solid var(--line); box-shadow:0 1px 3px rgba(20,34,76,.05); background:var(--card-bg);}
   .card-title{font-weight:700; color:var(--navy);}
   [data-theme="dark"] .card-title{color:#d7e0f0;}
@@ -155,7 +157,7 @@
     div.card.exec-panel{background:#14244c !important; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
     main{padding-top:.5rem;}
     .card, .chart-card, figure, table, tr, .metric{break-inside:avoid; page-break-inside:avoid;}
-    .chart-wrap{height:230px;}
+    .chart-figure{height:230px;}
     .card, .metric{box-shadow:none !important;}
     a{text-decoration:none !important; color:inherit !important;}
     .btn-print{display:none !important;}
@@ -231,6 +233,9 @@
   <!-- ===== 3 CHARTS ===== -->
   <div class="sec-head mt-5 mb-1" id="s3" data-num="03"><h2 class="mb-0">Performance Overview</h2></div>
   {{ charts_html|safe }}
+
+  <!-- ===== 3b VS PREVIOUS RUN (callout, only when a baseline exists) ===== -->
+  {% if run_comparison_html %}{{ run_comparison_html|safe }}{% endif %}
 
   <!-- ===== 4 FINDINGS ===== -->
   <div class="sec-head mt-5 mb-1" id="s4" data-num="04"><h2 class="mb-0">Findings</h2></div>

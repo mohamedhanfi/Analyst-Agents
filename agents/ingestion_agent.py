@@ -237,7 +237,18 @@ def _run_deterministic(file_path: str, run_dir: Path, cfg: Dict[str, Any],
     extracted_path = read.extracted_path
     if read.file_type == "xlsx":
         names = [s.name for s in read.sheets]
-        if len(names) == 1:
+        merge_sheets = bool(
+            cfg.get("reader", {}).get("merge_sheets", False))
+        if len(names) > 1 and merge_sheets:
+            # Audit M: multi-sheet merge is opt-in via reader.merge_sheets.
+            t0 = time.monotonic()
+            extracted_path = reader.extract_merged(file_path, names)
+            log.tool_call(STAGE, "file_sheet_merge_tool", "passed",
+                          time.monotonic() - t0)
+            context.sheet_used = "ALL_SHEETS_MERGED"
+            log.info(STAGE, "multi-sheet merge enabled; all sheets combined",
+                     sheets=len(names))
+        elif len(names) == 1:
             sheet = names[0]
         elif context.sheet_used in names:
             sheet = context.sheet_used

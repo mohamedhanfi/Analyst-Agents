@@ -54,10 +54,40 @@ def test_invalid_override_keeps_rule_role():
     assert cols[1].role == "dimension"
 
 
+def test_override_reason_logged_accepted():
+    facts = [ColumnFacts(name="rating", dtype="float64", nunique=5,
+                         nullable=False, suggested_role="measure",
+                         alternate_roles=["categorical"])]
+    cols = apply_role_overrides(facts, {"rating": "categorical"})
+    assert cols[0].override_source == "llm"
+    assert "accepted" in cols[0].override_reason
+
+
+def test_override_reason_logged_rejected():
+    facts = [ColumnFacts(name="city", dtype="object", nunique=12,
+                         nullable=False, suggested_role="categorical",
+                         alternate_roles=[])]
+    cols = apply_role_overrides(facts, {"city": "measure"})
+    assert cols[0].role == "categorical"
+    assert cols[0].override_source == "llm"
+    assert "rejected" in cols[0].override_reason
+
+
+def test_no_override_reason_rules():
+    facts = [ColumnFacts(name="city", dtype="object", nunique=12,
+                         nullable=False, suggested_role="categorical",
+                         alternate_roles=[])]
+    cols = apply_role_overrides(facts, {})
+    assert cols[0].override_source == "rules"
+    assert "no override" in cols[0].override_reason
+
+
 def test_unknown_column_ignored():
     facts = facts_for(make_profile())
     cols = apply_role_overrides(facts, {"ghost": "identifier"})
-    assert [c.role for c in cols] == ["measure", "dimension"]
+    # zip_code is an identifier via the semantic heuristic (task A.1) —
+    # the unknown override is ignored and its rule-based role is kept.
+    assert [c.role for c in cols] == ["identifier", "dimension"]
 
 
 # ---------------------------------------------------------------------------

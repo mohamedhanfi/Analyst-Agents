@@ -34,9 +34,21 @@ InputFunc = Callable[[str], str]
 
 class BusinessContextGatherer:
     def __init__(self, timeout_seconds: int = 300,
-                 input_func: InputFunc | None = None):
+                 input_func: InputFunc | None = None,
+                 answered_by: str = ""):
         self.timeout_seconds = timeout_seconds
         self._input = input_func or input
+        self.answered_by = answered_by or self._default_identity()
+        self._answer_log: List[Dict] = []
+
+    @staticmethod
+    def _default_identity() -> str:
+        """Best-effort OS identity for the human-input audit trail (§8)."""
+        try:
+            import getpass
+            return getpass.getuser() or ""
+        except Exception:  # noqa: BLE001 -- never block on identity
+            return ""
 
     # ------------------------------------------------------------------ API
 
@@ -76,6 +88,8 @@ class BusinessContextGatherer:
             goal_summary=goal_summary,
             context_confidence=confidence,
             generic_mode=False,
+            answered_by=self.answered_by,
+            answer_log=list(self._answer_log),
         )
 
     # ------------------------------------------------------------- internals
@@ -94,7 +108,7 @@ class BusinessContextGatherer:
         def worker() -> None:
             try:
                 box["value"] = self._input(prompt + " ")
-            except EOFError:
+            except (EOFError, OSError):
                 box["value"] = None
 
         thread = threading.Thread(target=worker, daemon=True)
@@ -105,7 +119,14 @@ class BusinessContextGatherer:
         value = box.get("value")
         if value is None:
             return None
-        return str(value).strip()
+        answer = str(value).strip()
+        self._answer_log.append({
+            "question": prompt,
+            "answer": answer,
+            "ts": round(time.time(), 3),
+            "answered_by": self.answered_by or None,
+        })
+        return answer
 
     @staticmethod
     def _recompute_deadline(_deadline: float) -> float:
@@ -119,12 +140,18 @@ class BusinessContextGatherer:
         base = len(answered) / len(DEFAULT_QUESTIONS)
         return min(1.0, round(base + (0.1 if sheet_used else 0.0), 2))
 
-    @staticmethod
-    def _generic(file_name: str) -> BusinessContext:
+    def _generic(self, file_name: str) -> BusinessContext:
         return BusinessContext(
             file_name=file_name,
             context_confidence=0.0,
             generic_mode=True,
+            answered_by=self.answered_by,
+            answer_log=[{
+                "question": "<timeout>",
+                "answer": "",
+                "ts": round(time.time(), 3),
+                "answered_by": self.answered_by or None,
+            }],
         )
 
     # ------------------------------------------------------------------ save

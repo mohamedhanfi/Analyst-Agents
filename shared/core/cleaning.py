@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 
+from shared.core.semantic_guards import IDENTIFIER_NAME_RE, NEGATIVE_ALLOWED_RE
 from shared.schemas import (
     CleaningResult,
     DatasetUnderstanding,
@@ -100,8 +101,12 @@ def build_strategy(understanding: DatasetUnderstanding,
         rate = float(meta.get("rate", 0.0))
         assessment = str(meta.get("assessment", "none"))
         flags = invalid.get(col.name, [])
-        if col.role == "measure" and any(
-                "negative" in str(item) for item in flags):
+        # 4.2/3.2: drop_negative is deterministic auto-apply for flagged
+        # negative measures — but never for measures whose semantics allow
+        # negatives (temperature, balance, growth, ...).
+        if (col.role == "measure" and any(
+                "negative" in str(item) for item in flags)
+                and not NEGATIVE_ALLOWED_RE.search(col.name)):
             decision = {"action": "drop_negative",
                         "detail": "negative_measure_flagged"}
         else:
@@ -175,6 +180,13 @@ def normalize_strategy(raw: Any,
             continue
         if mode not in ("flag", "drop"):
             errors.append(f"{name}: outlier mode must be 'flag' or 'drop'")
+            continue
+        # 3.1: outliers are only meaningful for measures — never flag/drop
+        # identifier or categorical columns as "outliers".
+        role = known_columns[name].role
+        if role in ("identifier", "categorical") \
+                or IDENTIFIER_NAME_RE.search(name):
+            errors.append(f"outlier column '{name}' is not a measure")
             continue
         cleaned_outliers[name] = mode
 
@@ -333,7 +345,19 @@ def execute_strategy(df: pd.DataFrame, strategy: Dict[str, Any],
             df = df.drop(columns=[name])
             log.append({"op": "drop_column", "column": name})
 
-    outliers = apply_iqr_outliers(df, strategy.get("outliers") or {}, log)
+    # 3.1: the executor is authoritative — even a strategy that bypassed
+    # normalize_strategy never flags/drops outliers on non-measure columns.
+    guarded_outliers: Dict[str, str] = {}
+    for column, mode in (strategy.get("outliers") or {}).items():
+        meta = next((c for c in understanding.columns
+                     if c.name == column), None)
+        if meta is not None and (meta.role in ("identifier", "categorical")
+                                 or IDENTIFIER_NAME_RE.search(column)):
+            log.append({"op": "iqr_outlier", "column": column,
+                        "detail": "skipped_not_measure"})
+            continue
+        guarded_outliers[column] = mode
+    outliers = apply_iqr_outliers(df, guarded_outliers, log)
 
     return df, log
 

@@ -255,6 +255,33 @@ class TestPipeline:
         assert "ingestion" in result["stage_results"]
         assert "qa" in result["stage_results"]
 
+    def test_stage_timeout_aborts(self, tmp_path, monkeypatch):
+        """A stage exceeding limits.stage_timeout_seconds aborts the run."""
+        import time as _t
+
+        def slow(_stage):
+            _t.sleep(30)
+            return _ok_result("qa")
+
+        self._mock_modules(monkeypatch, overrides={"ingestion": slow})
+
+        from crew.crew import run_pipeline
+        result = run_pipeline(
+            "tests/fixtures/sales_demo.csv",
+            use_crew=False,
+            cfg={"pipeline_version": "4.3.0", "llm": {"max_cost_usd": 999},
+                 "limits": {"max_run_seconds": 9999,
+                            "cleaning_max_rechecks": 3,
+                            "stage_timeout_seconds": 1}},
+        )
+        assert result["verdict"] == "NEEDS_REVISION"
+        assert result["score"] == 0.0
+        verdict = json.loads(
+            (Path(result["run_dir"]) / "metadata" / "qa_verdict.json")
+            .read_text(encoding="utf-8"))
+        assert any("stage_timeout_seconds" in r for r in
+                   verdict.get("reason_codes", []))
+
     def test_master_manifest_written(self, tmp_path, monkeypatch):
         """master_manifest.json is created."""
         self._mock_modules(monkeypatch)

@@ -14,7 +14,7 @@
 | Never | compute, draw, clean, read raw files | — |
 | Always | decide what to run, interpret results, write insights & summary | every number, file, chart, cleaning op, validation |
 
-Computation stack: **pandas, numpy, scipy, statsmodels, matplotlib, seaborn, openpyxl, jinja2, weasyprint**.
+Computation stack: **pandas, numpy, scipy, openpyxl, jinja2** (v4.7: statsmodels/babel/matplotlib/seaborn/weasyprint dropped — statistical suite runs on scipy, charts are the hand-rolled SVG renderer of v4.4+, and number formatting is shared/formatting.py).
 
 ### Pipeline
 
@@ -27,7 +27,7 @@ USER UPLOADS CSV / XLSX
 [2] UNDERSTANDING    profile + sample → column roles → domain → analysis plan (DSL)
         ▼
 [3] DATA QUALITY     schema/invalid/missingness → "passed" | "needs_repair"
-        │                 └─ Repair: deterministic fix, internal to Agent 3
+        │                 └─ Repair: deterministic fix, internal to the Data Quality agent
         ▼
 [4] CLEANING         LLM strategy + Python execution → cleaned data + log
         ▼
@@ -43,7 +43,7 @@ USER UPLOADS CSV / XLSX
 ```
 
 Branches:
-- DQ gate → `needs_repair`: **Repair is an internal step of Agent 3** (not a separate stage) — Python fixes safe items deterministically, flags the rest for Cleaning
+- DQ gate → `needs_repair`: **Repair is an internal step of the Data Quality agent** (not a separate stage) — Python fixes safe items deterministically, flags the rest for Cleaning
 - Post-cleaning re-check **FAIL** → Cleaning re-runs (**max 3 re-runs**; at the cap the pipeline stops and emits **auto-verdict NEEDS_REVISION**, reason `cleaning_retry_limit_exceeded`)
 - QA **NEEDS_REVISION** → stop, user gets QA report
 
@@ -265,7 +265,7 @@ Rule: **Repair never invents data.** It only casts types, drops exact duplicates
 |------|------|
 | `decide_cleaning_strategy` | picks the fill/drop/flag strategy per column, per the role×missingness table above (JSON output) |
 | `execute_cleaning` | hands the strategy to Python for execution + logging |
-| `recheck_data_quality` | re-runs Agent 3's checks on the cleaned output; loops back on `FAIL` (max 3 re-runs, §1) |
+| `recheck_data_quality` | re-runs the Data Quality agent's checks on the cleaned output; loops back on `FAIL` (max 3 re-runs, §1) |
 
 **Tools used:** `cleaning_strategy_tool` (LLM) · `fillna_tool` · `flag_column_tool` (`*_missing_flag`) · `type_caster_tool` · `dedup_tool` · `iqr_outlier_tool` · `dq_recheck_tool` (calls `agents/data_quality.py`)
 
@@ -374,7 +374,7 @@ Falling back if the data is too thin: planner downgrades to a simple bar or a ta
 | `run_dsl_and_stats` | hands DSL ops + relevant statistical tests to Python for execution |
 | `rank_chart_candidates` | reviews `chart_planner` output, may re-rank with a written reason and **propose chart kinds** (`proposed_kinds`, validated by Python) — shape/draw stays Python's call |
 
-**Tools used:** `dsl_executor_tool` (whitelist only, via `shared/dsl_validator.py`) · `statistical_suite_tool` (scipy/statsmodels) · `chart_planner_tool` (`analysis/chart_planner.py` — deterministic rule table + `validate_proposed_kinds` for LLM proposals) · `chart_renderer_tool` (`analysis/chart_renderer.py` — hand-rolled SVG, deterministic, no plotting library) · `evidence_registry_tool` (`analysis/evidence.py` — the only writer)
+**Tools used:** `dsl_executor_tool` (whitelist only, via `shared/dsl_validator.py`) · `statistical_suite_tool` (scipy) · `chart_planner_tool` (`analysis/chart_planner.py` — deterministic rule table + `validate_proposed_kinds` for LLM proposals) · `chart_renderer_tool` (`analysis/chart_renderer.py` — hand-rolled SVG, deterministic, no plotting library) · `evidence_registry_tool` (`analysis/evidence.py` — the only writer)
 
 **Chart accessibility:**
 - **Color-blind safe palettes** — Okabe-Ito / seaborn colorblind; never red-green as the only encoding.
@@ -383,7 +383,7 @@ Falling back if the data is too thin: planner downgrades to a simple bar or a ta
 
 **Localization:**
 - All numeric/datetime formatting follows the report's `locale` (from business context; default `en`): decimal separators and date formats (`en-US` → `1,234.5`, `ar-EG` → `١٬٢٣٤٫٥`).
-- Formatting is applied in the Report render step by Python (`babel`), not the LLM.
+- Formatting is applied in the Report render step by Python (`shared/formatting.py` — hand-rolled, no babel dependency), not the LLM.
 - `RTL` layout + Arabic font support for `ar` locales (see §7 roadmap).
 
 ---
@@ -461,7 +461,7 @@ Falling back if the data is too thin: planner downgrades to a simple bar or a ta
 | `render_report` | Python renders every section from the run's JSONs into `resources/report_template.html` |
 | `write_executive_summary` | LLM writes **only** the 3-5 sentence executive summary |
 
-**Tools used:** `html_renderer_tool` (jinja2, `autoescape=True`) · `html_sanitizer_tool` · `locale_formatter_tool` (babel, per §2.5 localization) · `chart_embed_tool` (alt-text captions from chart metadata)
+**Tools used:** `html_renderer_tool` (jinja2, `autoescape=True`) · `html_sanitizer_tool` · `locale_formatter_tool` (shared/formatting.py, per §2.5 localization) · `chart_embed_tool` (alt-text captions from chart metadata)
 
 ---
 
@@ -564,7 +564,7 @@ insight-forge/
 ├── main.py                     # entry — builds Crew, runs Flow
 ├── config.yaml                 # single config: per-agent role/goal/backstory/model, hard limits (§1), retention (§5), review_required (§2.6)
 ├── .env.example                # API keys (loaded via shared/utils.py, never committed)
-├── pyproject.toml              # deps: crewai + §1 stack (pandas, numpy, scipy, statsmodels, matplotlib, seaborn, openpyxl, jinja2, weasyprint, babel)
+├── pyproject.toml              # deps: crewai + §1 stack (pandas, numpy, scipy, openpyxl, jinja2, pyyaml, python-dotenv)
 ├── crew/
 │   ├── crew.py                 # CrewAI Agents + Tasks in order
 │   └── flows.py                # DQ gate, Cleaning re-check, QA verdict branches; invokes deterministic stages
@@ -618,7 +618,7 @@ Published for every run, side by side with the output files:
 Each run gets a unique `run_id` (`run_<timestamp>_<seq>`) and writes **only** to `runs/<run_id>/` — extracted data, cleaned data, all outputs, logs, and its own manifest live there. Isolation model:
 
 - **Scope:** one pipeline run = **its own sub-directory + own Crew instance**. Two runs never touch the same files.
-- **Concurrency:** safe to launch many runs in parallel. Python-side (pandas/matplotlib) is process-local; no global temp dirs, no shared in-memory state.
+- **Concurrency:** safe to launch many runs in parallel. Python-side (pandas) is process-local; no global temp dirs, no shared in-memory state.
 - **Locking:** only the output root (`runs/`) needs a lightweight `run_id` allocator (atomic `mkdir`); reads of shared static assets (`resources/`) are read-only and safe concurrently.
 - **Teardown:** `logs/` per run; retention policy (configurable) deletes old runs.
 

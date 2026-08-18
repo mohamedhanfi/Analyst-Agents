@@ -127,7 +127,8 @@ def test_planner_tool_returns_proposal_errors(make_understanding, tmp_path):
         str(csv_path), understanding.model_dump_json(),
         plan.model_dump_json(),
         limits_json=json.dumps({"max_chart_count": 10,
-                                "thin_threshold": 0}),
+                                "thin_threshold": 0,
+                                "enable_chart_kind_proposals": True}),
         proposals_json=json.dumps([
             {"kpi_id": "K1", "kind": "area", "reason": "trend"},
             {"kpi_id": "K2", "kind": "radar", "reason": "fancy"},
@@ -140,3 +141,44 @@ def test_planner_tool_returns_proposal_errors(make_understanding, tmp_path):
     assert any("K2" in e for e in payload["proposal_errors"])
     assert any("K9" in e for e in payload["proposal_errors"])
     assert "charts_truncated" in payload
+
+
+def test_proposals_enabled_by_default(make_understanding, tmp_path):
+    """Task B.1: chart-kind proposals are ON by default now (config
+    charts.enable_kind_proposals: true) — valid proposals are honored."""
+    from shared.tools.analysis import chart_planner_tool
+    csv_path = tmp_path / "sales.csv"
+    SALES.to_csv(csv_path, index=False)
+    understanding = _understanding(make_understanding, SALES)
+    plan = _plan(_kpi())
+    raw = chart_planner_tool.run(
+        str(csv_path), understanding.model_dump_json(),
+        plan.model_dump_json(),
+        limits_json=json.dumps({"max_chart_count": 10,
+                                "thin_threshold": 0}),
+        proposals_json=json.dumps(
+            [{"kpi_id": "K1", "kind": "area", "reason": "trend"}]))
+    payload = json.loads(raw)
+    kinds = {c["kind"] for c in payload["charts"]}
+    assert "area" in kinds
+
+
+def test_proposals_can_be_disabled_per_call(make_understanding, tmp_path):
+    """The per-call limits override still turns proposals off."""
+    from shared.tools.analysis import chart_planner_tool
+    csv_path = tmp_path / "sales.csv"
+    SALES.to_csv(csv_path, index=False)
+    understanding = _understanding(make_understanding, SALES)
+    plan = _plan(_kpi())
+    raw = chart_planner_tool.run(
+        str(csv_path), understanding.model_dump_json(),
+        plan.model_dump_json(),
+        limits_json=json.dumps({"max_chart_count": 10,
+                                "thin_threshold": 0,
+                                "enable_chart_kind_proposals": False}),
+        proposals_json=json.dumps(
+            [{"kpi_id": "K1", "kind": "area", "reason": "trend"}]))
+    payload = json.loads(raw)
+    kinds = {c["kind"] for c in payload["charts"]}
+    assert "area" not in kinds          # gated: rule table wins
+    assert "line" in kinds

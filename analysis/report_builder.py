@@ -19,7 +19,12 @@ from typing import Any, Dict, List
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+import pandas as pd
+
+from analysis.chart_renderer import (PALETTE, _fd_bins, _hist, _linreg,
+                                     _prepare, _to_float)
 from shared.formatting import fmt as _fmt
+from shared.schemas import ChartMetadata, KpiResult
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +34,7 @@ _SECTIONS = [
     "executive_summary", "business_context", "dq_summary",
     "data_overview", "kpis", "stats", "charts",
     "insights", "recommendations", "limitations", "evidence",
+    "run_comparison",
 ]
 
 
@@ -96,6 +102,8 @@ def load_artifacts(run_dir: Path) -> Dict[str, Any]:
         "dq_report": dq_raw if isinstance(dq_raw, dict) else {},
         "cleaning_result": cleaning_raw
         if isinstance(cleaning_raw, dict) else {},
+        "run_comparison": _load_json(out / "run_comparison.json")
+        if isinstance(_load_json(out / "run_comparison.json"), dict) else {},
     }
 
 
@@ -115,12 +123,42 @@ def _esc(text: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
+# 5.5: business-relevance ranking for the report's headline KPI cards —
+# primary measures outrank generic numeric columns, magnitude breaks ties.
+_PRIMARY_MEASURE_KEYWORDS = (
+    "revenue", "sales", "amount", "total", "profit", "cost", "price",
+    "qty", "quantity", "count", "spend", "value", "margin", "volume",
+)
+
+
+def _kpi_relevance(kpi: Dict[str, Any]) -> tuple[float, float]:
+    """(relevance, magnitude) sort key — higher relevance first."""
+    op = kpi.get("operation") or {}
+    column = str(op.get("column") or op.get("column_a") or "").lower()
+    name = str(kpi.get("name", "")).lower()
+    relevance = 0.0
+    if any(kw in column for kw in _PRIMARY_MEASURE_KEYWORDS):
+        relevance += 2.0
+    if any(kw in name for kw in _PRIMARY_MEASURE_KEYWORDS):
+        relevance += 1.0
+    if str(op.get("function", "")) in ("sum", "count"):
+        relevance += 0.5
+    value = kpi.get("value")
+    try:
+        magnitude = abs(float(value))
+    except (TypeError, ValueError):
+        magnitude = 0.0
+    return relevance, magnitude
+
+
 def render_kpis(kpis: List[Dict[str, Any]]) -> str:
-    """Render top KPI metric cards (up to 4)."""
+    """Render top KPI metric cards (up to 4), ranked by business relevance
+    (5.5) rather than plan order or statistical variance alone."""
     if not kpis:
         return '<p class="text-secondary">No KPIs computed.</p>'
     parts: List[str] = []
-    for kpi in kpis[:4]:
+    ranked = sorted(kpis, key=_kpi_relevance, reverse=True)
+    for kpi in ranked[:4]:
         val = kpi.get("value")
         formatted = _fmt(float(val)) if val is not None else "N/A"
         name = kpi.get("name", kpi.get("kpi_id", "KPI"))
@@ -169,11 +207,293 @@ def render_stats(stats: List[Dict[str, Any]]) -> str:
     )
 
 
-def render_charts(charts: List[Dict[str, Any]], run_dir: Path) -> str:
-    """Embed each chart as an <img> with a caption."""
+# ---------------------------------------------------------------------------
+# Charts — interactive (Chart.js canvas) with a static SVG fallback
+# ---------------------------------------------------------------------------
+
+# Kinds with a Chart.js mapping. boxplot/heatmap/lollipop (and unknown
+# kinds) stay as static SVG images — they would need extra chart.js plugins.
+_INTERACTIVE_KINDS = frozenset({
+    "bar", "barh", "line", "area", "doughnut", "pie",
+    "histogram", "stacked_bar", "scatter",
+})
+
+
+def _load_chart_df(run_dir: Path) -> Any | None:
+    """The same cleaned frame the analysis stage rendered the SVGs from."""
+    cleaned = Path(run_dir) / "data" / "processed" / "cleaned_data.csv"
+    if not cleaned.is_file():
+        return None
+    try:
+        return pd.read_csv(cleaned, encoding="utf-8-sig")
+    except Exception:  # noqa: BLE001 -- report must still render
+        return None
+
+
+def _dataset_label(meta: ChartMetadata) -> str:
+    return meta.columns[0] if meta.columns else (meta.title or "")
+
+
+def _empty_scatter_cfg() -> Dict[str, Any]:
+    return {
+        "type": "scatter",
+        "data": {"labels": [], "datasets": [
+            {"label": "", "data": [], "backgroundColor": PALETTE[0]}]},
+        "options": {"responsive": True, "maintainAspectRatio": False,
+                    "plugins": {"legend": {"display": True}}},
+    }
+
+
+def _js_config(chart: Dict[str, Any], df: Any,
+               kpi_objs: List[Any]) -> Dict[str, Any] | None:
+    """Deterministic Chart.js config for one chart. Aggregation reuses
+    chart_renderer's own data preparation so the interactive canvas shows
+    exactly what the static SVG shows. Returns None when the kind has no
+    mapping or the data is empty (the static SVG is shown instead)."""
+    kind = chart.get("kind")
+    if kind not in _INTERACTIVE_KINDS:
+        return None
+    try:
+        meta = ChartMetadata(**chart)
+    except Exception:  # noqa: BLE001 -- never fail the report
+        return None
+    prepared = _prepare(meta, df, kpi_objs)
+    labels = prepared.get("labels") or []
+    values = prepared.get("values") or []
+    base_options: Dict[str, Any] = {
+        "responsive": True, "maintainAspectRatio": False,
+        "plugins": {"legend": {"display": False}},
+    }
+
+    if kind == "bar":
+        if not labels:
+            return None
+        return {
+            "type": "bar",
+            "data": {"labels": labels,
+                     "datasets": [{"label": _dataset_label(meta),
+                                   "data": values,
+                                   "backgroundColor": list(PALETTE)}]},
+            "options": {**base_options,
+                        "scales": {"y": {"beginAtZero": True}}},
+        }
+    if kind == "barh":
+        if not labels:
+            return None
+        return {
+            "type": "bar",
+            "data": {"labels": labels,
+                     "datasets": [{"label": _dataset_label(meta),
+                                   "data": values,
+                                   "backgroundColor": list(PALETTE)}]},
+            "options": {**base_options, "indexAxis": "y",
+                        "scales": {"x": {"beginAtZero": True}}},
+        }
+    if kind in ("line", "area"):
+        if not labels:
+            return None
+        filled = kind == "area"
+        return {
+            "type": "line",
+            "data": {"labels": labels,
+                     "datasets": [{"label": _dataset_label(meta),
+                                   "data": values,
+                                   "borderColor": PALETTE[0],
+                                   "backgroundColor": PALETTE[0] + "40",
+                                   "borderWidth": 2.5,
+                                   "pointRadius": 3,
+                                   "fill": filled}]},
+            "options": {**base_options},
+        }
+    if kind in ("pie", "doughnut"):
+        if not labels:
+            return None
+        return {
+            "type": kind,
+            "data": {"labels": labels,
+                     "datasets": [{"data": values,
+                                   "backgroundColor": list(PALETTE),
+                                   "borderColor": "#ffffff",
+                                   "borderWidth": 1.5}]},
+            "options": {**base_options,
+                        "plugins": {"legend": {"display": True}}},
+        }
+    if kind == "histogram":
+        series = prepared.get("series") or []
+        if not series:
+            return None
+        bins = _fd_bins(series)
+        counts, edges = _hist(series, bins)
+        bin_labels = [f"{_fmt(edges[i])}–{_fmt(edges[i + 1])}"
+                      for i in range(len(counts))]
+        return {
+            "type": "bar",
+            "data": {"labels": bin_labels,
+                     "datasets": [{"label": meta.columns[0]
+                                   if meta.columns else meta.title,
+                                   "data": counts,
+                                   "backgroundColor": PALETTE[0] + "BF"}]},
+            "options": {**base_options,
+                        "scales": {"y": {"beginAtZero": True}}},
+        }
+    if kind == "stacked_bar":
+        dimension = meta.columns[0] if meta.columns else None
+        measures = [c for c in meta.columns[1:] if c in df.columns]
+        if not dimension or dimension not in df.columns or len(measures) < 2:
+            return None
+        grouped = df.groupby(dimension, dropna=False)
+        rows = sorted(grouped, key=lambda pair: str(pair[0]))
+        if not rows:
+            return None
+        datasets = [
+            {"label": measure,
+             "data": [max(0.0, _to_float(group[measure].sum()) or 0.0)
+                      for _, group in rows],
+             "backgroundColor": PALETTE[j % len(PALETTE)]}
+            for j, measure in enumerate(measures)]
+        return {
+            "type": "bar",
+            "data": {"labels": [str(key) for key, _ in rows],
+                     "datasets": datasets},
+            "options": {**base_options,
+                        "plugins": {"legend": {"display": True}},
+                        "scales": {"x": {"stacked": True},
+                                   "y": {"stacked": True,
+                                         "beginAtZero": True}}},
+        }
+    if kind == "scatter":
+        cols = [c for c in meta.columns if c in df.columns][:2]
+        if len(cols) != 2:
+            return None
+        pairs = [(x, y) for x, y in
+                 ((_to_float(a), _to_float(b))
+                  for a, b in zip(df[cols[0]], df[cols[1]]))
+                 if x is not None and y is not None]
+        if len(pairs) < 2:
+            return None
+        shown = min(len(pairs), 1500)
+        idx = [round(i * (len(pairs) - 1) / (shown - 1))
+               for i in range(shown)] if shown > 1 else [0]
+        pts = [[pairs[i][0], pairs[i][1]] for i in idx]
+        xs = [p[0] for p in pairs]
+        ys = [p[1] for p in pairs]
+        slope, intercept = _linreg(xs, ys)
+        x0, x1 = min(xs), max(xs)
+        cfg = _empty_scatter_cfg()
+        cfg["data"]["labels"] = None
+        cfg["data"]["datasets"] = [
+            {"label": f"{cols[0]} → {cols[1]}", "data": pts,
+             "backgroundColor": PALETTE[0], "pointRadius": 3,
+             "pointHoverRadius": 5},
+            {"label": "trend", "data": [[x0, intercept + slope * x0],
+                                        [x1, intercept + slope * x1]],
+             "type": "line", "borderColor": PALETTE[1],
+             "borderDash": [4, 3], "borderWidth": 2, "pointRadius": 0,
+             "fill": False, "showLine": True},
+        ]
+        cfg["options"]["plugins"]["datalabels"] = False
+        return cfg
+    return None
+
+
+def _has_chart_data(cfg: Dict[str, Any]) -> bool:
+    for dataset in cfg["data"]["datasets"]:
+        if dataset.get("data"):
+            return True
+    return False
+
+
+_JS_INIT = """\
+<script>
+window.__REPORT_CHARTS__ = %s;
+(function(){
+  function fmt(v){
+    if (v === null || v === undefined || typeof v !== 'number' || isNaN(v)) return '';
+    if (Number.isInteger(v)) return v.toLocaleString('en-US');
+    var a = Math.abs(v);
+    if (a >= 1000) return Math.round(v).toLocaleString('en-US');
+    if (v === 0) return '0';
+    if (a >= 1) return v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    var s = v.toFixed(3);
+    while (s.indexOf('.') >= 0 && s.charAt(s.length - 1) === '0') s = s.slice(0, -1);
+    if (s.charAt(s.length - 1) === '.') s = s.slice(0, -1);
+    return s;
+  }
+  function fallback(id){
+    var el = document.getElementById('chart-' + id);
+    var img = document.getElementById('img-' + id);
+    if (el) el.style.display = 'none';
+    if (img) img.style.display = '';
+  }
+  function init(){
+    var CFG = window.__REPORT_CHARTS__ || {};
+    var hasChart = (typeof Chart !== 'undefined');
+    Object.keys(CFG).forEach(function(id){
+      if (!hasChart) { fallback(id); return; }
+      var el = document.getElementById('chart-' + id);
+      if (!el) return;
+      var c = CFG[id];
+      c.options = c.options || {};
+      c.options.plugins = c.options.plugins || {};
+      c.options.plugins.tooltip = c.options.plugins.tooltip || {};
+      c.options.plugins.tooltip.callbacks = c.options.plugins.tooltip.callbacks || {};
+      c.options.plugins.tooltip.callbacks.label = function(ctx){
+        var v = ctx.parsed;
+        if (v && v.y !== undefined) v = v.y; else if (v && v.x !== undefined) v = v.x;
+        var head = ctx.label ? ctx.label + ' \\u00b7 ' : '';
+        var name = ctx.dataset && ctx.dataset.label ? ctx.dataset.label + ': ' : '';
+        return head + name + fmt(v);
+      };
+      if (typeof ChartDataLabels !== 'undefined' && c.options.plugins.datalabels !== false) {
+        var n = c.data && c.data.labels ? c.data.labels.length : 0;
+        if (n > 0 && n <= 12) {
+          c.options.plugins.datalabels = c.options.plugins.datalabels || {};
+          c.options.plugins.datalabels.formatter = function(v, ctx){
+            if (c.type === 'pie' || c.type === 'doughnut') {
+              var tot = ctx.dataset.data.reduce(function(a, b){ return a + b; }, 0) || 1;
+              return fmt(100 * v / tot) + '%';
+            }
+            return fmt(v);
+          };
+          c.options.plugins.datalabels.color = '#333333';
+          c.options.plugins.datalabels.anchor = 'end';
+          c.options.plugins.datalabels.align = 'end';
+          if (c.type === 'pie' || c.type === 'doughnut') {
+            c.options.plugins.datalabels.anchor = 'center';
+            c.options.plugins.datalabels.align = 'center';
+          }
+        } else {
+          c.options.plugins.datalabels = { display: false };
+        }
+      }
+      try { new Chart(el, c); }
+      catch (e) { fallback(id); }
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else { init(); }
+})();
+</script>"""
+
+
+def render_charts(charts: List[Dict[str, Any]], run_dir: Path,
+                  kpis: List[Dict[str, Any]] | None = None) -> str:
+    """Interactive Chart.js figures (canvas) with a static SVG fallback.
+
+    Kinds without a Chart.js mapping (boxplot/heatmap/lollipop), runs where
+    the cleaned frame is unavailable, and empty charts stay as static
+    <img> — the report never shows a blank figure.
+    """
     if not charts:
         return '<p class="text-secondary">No charts generated.</p>'
+    try:
+        kpi_objs = [KpiResult(**k) for k in (kpis or [])]
+    except Exception:  # noqa: BLE001 -- missing kpis never kill the report
+        kpi_objs = []
+    df = _load_chart_df(run_dir)
     figures: List[str] = []
+    configs: Dict[str, Any] = {}
     charts_dir = run_dir / "outputs" / "charts"
     for ch in charts:
         chart_id = ch.get("chart_id", "")
@@ -183,7 +503,12 @@ def render_charts(charts: List[Dict[str, Any]], run_dir: Path) -> str:
         full = run_dir / path
         if not full.exists():
             full = charts_dir / f"{chart_id}.svg"
-        src = str(path).replace("\\", "/")
+        # src is relative to the run dir so the report is portable:
+        # it works from disk and when served over HTTP
+        try:
+            src = full.resolve().relative_to(run_dir.resolve()).as_posix()
+        except ValueError:
+            src = str(path).replace("\\", "/")
         title = ch.get("title", chart_id)
         reliability = ch.get("reliability", "")
         eid = ch.get("evidence_id", "")
@@ -192,14 +517,33 @@ def render_charts(charts: List[Dict[str, Any]], run_dir: Path) -> str:
             caption += f" ({_esc(reliability)})"
         if eid:
             caption += f" — {_esc(eid)}"
-        figures.append(
-            f'<figure class="mb-3">'
-            f'<img src="{_esc(src)}" alt="{_esc(title)}" '
-            f'class="img-fluid rounded" loading="lazy" />'
-            f'<figcaption>{caption}</figcaption>'
-            f'</figure>'
-        )
-    return "\n".join(figures)
+        cfg = _js_config(ch, df, kpi_objs) if df is not None else None
+        if cfg is not None and _has_chart_data(cfg):
+            configs[chart_id] = cfg
+            figures.append(
+                f'<figure class="mb-3 chart-figure">'
+                f'<canvas id="chart-{_esc(chart_id)}" class="chart-wrap" '
+                f'role="img" aria-label="{_esc(title)}"></canvas>'
+                f'<img id="img-{_esc(chart_id)}" src="{_esc(src)}" '
+                f'alt="{_esc(title)}" class="chart-static img-fluid rounded" '
+                f'loading="lazy" />'
+                f'<figcaption>{caption}</figcaption>'
+                f'</figure>'
+            )
+        else:
+            figures.append(
+                f'<figure class="mb-3">'
+                f'<img src="{_esc(src)}" alt="{_esc(title)}" '
+                f'class="img-fluid rounded" loading="lazy" />'
+                f'<figcaption>{caption}</figcaption>'
+                f'</figure>'
+            )
+    if not configs:
+        return "\n".join(figures)
+    # JSON is embedded inside <script> — escape "<" so a label can never
+    # break out of the script element (</script> / <!-- attacks).
+    payload = json.dumps(configs).replace("<", "\\u003c")
+    return "\n".join(figures) + "\n" + _JS_INIT.replace("%s", payload, 1)
 
 
 def render_insights(insights: List[Dict[str, Any]]) -> str:
@@ -278,6 +622,51 @@ def render_evidence(evidence: List[Dict[str, Any]]) -> str:
         '<table class="table table-hover align-middle mb-0">'
         '<thead><tr><th>Evidence ID</th><th>Aggregation</th>'
         f'<th>Lineage</th></tr></thead><tbody>{body}</tbody></table></div>'
+    )
+
+
+def render_run_comparison(cmp: Dict[str, Any]) -> str:
+    """"vs previous run" callout (§8): KPI deltas against the last cached
+    run of the same source file. Numbers only — Python-computed."""
+    if not cmp or not cmp.get("compared_kpis"):
+        return ""
+    prev_id = cmp.get("previous_run_id", "")
+    rows = []
+    for k in cmp["compared_kpis"][:15]:
+        cur = k.get("current")
+        prev = k.get("previous")
+        if not isinstance(cur, (int, float)) or not isinstance(
+                prev, (int, float)):
+            continue
+        if prev == 0:
+            delta = ""
+        else:
+            pct = (cur - prev) / abs(prev) * 100
+            arrow = "▲" if pct > 0 else "▼"
+            delta = f"{arrow} {abs(pct):.1f}%"
+        rows.append(
+            f"<tr><td>{_esc(str(k.get('name') or k.get('kpi_id')))}</td>"
+            f"<td>{_fmt(cur)}</td><td>{_fmt(prev)}</td>"
+            f"<td>{delta}</td></tr>"
+        )
+    if not rows:
+        return ""
+    body = "\n".join(rows)
+    prev_link = (
+        f'<a href="run_comparison.html" class="text-info">' if False else ""
+    )
+    return (
+        '<div class="card mb-4 shadow-sm">'
+        '<div class="card-header fw-semibold">'
+        '📊 vs Previous Run</div>'
+        '<div class="card-body">'
+        '<p class="text-secondary small">Compared against the most recent '
+        f"cached run of the same source file"
+        f"{f' (<code>{_esc(prev_id)}</code>)' if prev_id else ''}.</p>"
+        '<div class="table-responsive"><table class="table table-hover '
+        'align-middle mb-0"><thead><tr><th>KPI</th><th>Current</th>'
+        f'<th>Previous</th><th>Change</th></tr></thead>'
+        f"<tbody>{body}</tbody></table></div></div></div>"
     )
 
 
@@ -476,7 +865,8 @@ def _build_context(run_dir: Path, exec_summary: str,
         "report_date": _esc(report_date),
         "kpis_html": render_kpis(arts["kpis"]),
         "stats_html": render_stats(arts["stats"]),
-        "charts_html": render_charts(arts["charts"], run_dir),
+        "charts_html": render_charts(arts["charts"], run_dir,
+                                     arts["kpis"]),
         "insights_html": render_insights(arts["insights"]),
         "recommendations_html": render_recommendations(
             arts["recommendations"]),
@@ -488,6 +878,8 @@ def _build_context(run_dir: Path, exec_summary: str,
                                          arts["understanding"]),
         "limitations_html": render_limitations(arts["understanding"],
                                                arts["business_context"]),
+        "run_comparison_html": render_run_comparison(
+            arts["run_comparison"]),
         "kpis": arts["kpis"],
         "stats": arts["stats"],
         "charts": arts["charts"],

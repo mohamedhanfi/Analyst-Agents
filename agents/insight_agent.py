@@ -22,10 +22,20 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import pandas as pd
+
+from shared.core.semantic_guards import IDENTIFIER_NAME_RE
 from shared.formatting import fmt as _fmt, parse_json as _parse_json
 from shared.llm import build_llm
 from shared.logger import RunLogger
-from shared.schemas import Insight, KpiResult, Recommendation, StatisticalResult
+from shared.prompt_guard import data_note
+from shared.schemas import (
+    DatasetUnderstanding,
+    Insight,
+    KpiResult,
+    Recommendation,
+    StatisticalResult,
+)
 from shared.tools.insights import validate_insights
 from shared.utils import init_run_layout, load_config
 
@@ -76,7 +86,8 @@ def build_insight_task(agent: Any, run_dir: str | Path) -> Any:
             "already in the text\n"
             "- never invent new claims or new evidence\n"
             "Return one JSON object {\"insights\": [...], "
-            "\"recommendations\": [...]} and nothing else."
+            "\"recommendations\": [...]} and nothing else.\n"
+            + data_note()
         ),
         expected_output="JSON object with insights and recommendations arrays",
         agent=agent,
@@ -101,6 +112,7 @@ def _generate_insights(run_dir: Path,
                                                 List[str]]:
     kpis = _load_kpis(run_dir)
     stats = _load_stats(run_dir)
+    understanding = _load_understanding(run_dir)
     insights: List[Insight] = []
     counter = 0
 
@@ -116,13 +128,26 @@ def _generate_insights(run_dir: Path,
             break
         if kpi.operation.function == "correlation" or kpi.value is None:
             continue
+        # 6.2: no insight may rest on a value-aggregation of an
+        # identifier-like column, even if one slipped through upstream.
+        if _references_identifier(understanding, kpi.operation.column,
+                                  kpi.operation.column_a,
+                                  kpi.operation.column_b):
+            continue
         evidence_ids = [kpi.evidence_id] if kpi.evidence_id else []
+        description = (f"The {kpi.name} is {_fmt(kpi.value)} for this "
+                       f"dataset.")
+        if _is_ordinal_column(understanding, kpi.operation.column):
+            # 2.3: a mean satisfaction of 3.4 is an index of ordered
+            # categories, not a continuous measurement.
+            description += (" This is an ordinal scale, so the value is an "
+                            "index of ordered categories rather than a "
+                            "continuous measurement.")
         insights.append(Insight(
             insight_id=_next_id(),
             claim_type="DESCRIPTIVE",
             title=kpi.name,
-            description=f"The {kpi.name} is {_fmt(kpi.value)} for this "
-                        f"dataset.",
+            description=description,
             confidence=_descriptive_confidence(kpi),
             evidence_ids=evidence_ids,
             required_evidence=["aggregate"],
@@ -137,6 +162,15 @@ def _generate_insights(run_dir: Path,
                 and abs(st.statistic) >= 0.3 and st.p_value < 0.05):
             if len(insights) >= _MAX_INSIGHTS:
                 break
+            # 6.2: identifier pairs never ground an insight.
+            if _references_identifier(understanding, *st.variables):
+                continue
+            # 5.3: ordinal pairs — prefer the rank correlation entry. The
+            # suite marks it via extra, and the stage-2 ordinal flag is the
+            # authoritative backstop if that marking is ever missing.
+            if _pair_has_ordinal(understanding, st.variables) \
+                    and st.test_name == "pearson":
+                continue
             a, b = _pair_names(st)
             strength = "strong" if abs(st.statistic) >= 0.7 else "moderate"
             ci = ""
@@ -168,6 +202,9 @@ def _generate_insights(run_dir: Path,
             seen_pairs.add(pair)
             if len(insights) >= _MAX_INSIGHTS:
                 break
+            # 6.2: identifier columns never ground group comparisons either.
+            if _references_identifier(understanding, *st.variables):
+                continue
             if st.test_name in ("chi2", "cramers_v"):
                 text = (f"{a} and {b} are significantly associated "
                         f"(p = {st.p_value:.3f}).")
@@ -195,6 +232,8 @@ def _generate_insights(run_dir: Path,
                 continue
             if len(insights) >= _MAX_INSIGHTS:
                 break
+            if _references_identifier(understanding, *st.variables):
+                continue
             avg = sum(values) / len(values)
             a, b = _pair_names(st)
             insights.append(Insight(
@@ -209,6 +248,10 @@ def _generate_insights(run_dir: Path,
                 evidence_ids=[st.evidence_id] if st.evidence_id else [],
                 required_evidence=["growth_rate"],
             ))
+
+    # 6.1: spread claim types round-robin so the top-N (report headline +
+    # recommendations) never restates one finding family in new words.
+    insights = _diversify_insights(insights)
 
     recommendations = _build_recommendations(insights)
     valid, valid_recs, warnings = validate_insights(
@@ -225,6 +268,73 @@ def _descriptive_confidence(kpi: KpiResult) -> str:
     if kpi.operation.function in ("sum", "count", "min", "max"):
         return "high"
     return "medium"
+
+
+def _load_understanding(run_dir: Path) -> Optional[DatasetUnderstanding]:
+    """Stage-2 roles for the insight-level semantic gates (6.2/2.3)."""
+    path = run_dir / "metadata" / "dataset_understanding.json"
+    if not path.exists():
+        return None
+    try:
+        return DatasetUnderstanding.model_validate(
+            json.loads(path.read_text(encoding="utf-8")))
+    except Exception:  # noqa: BLE001 -- gates are best-effort
+        return None
+
+
+def _references_identifier(understanding: Optional[DatasetUnderstanding],
+                           *columns: str) -> bool:
+    """6.2: does a candidate insight rest on an identifier-like column?
+    Uses Stage-2 roles plus the shared name pattern — either one firing is
+    enough to drop the candidate."""
+    if not understanding:
+        return False
+    idents = {c.name for c in understanding.columns
+              if c.role == "identifier"}
+    for name in columns:
+        if not name:
+            continue
+        if name in idents:
+            return True
+        if IDENTIFIER_NAME_RE.search(name):
+            return True
+    return False
+
+
+def _is_ordinal_column(understanding: Optional[DatasetUnderstanding],
+                       column: str) -> bool:
+    """2.3: ordinal scales get explicit interpretation framing."""
+    if not understanding or not column:
+        return False
+    for c in understanding.columns:
+        if c.name == column:
+            return bool(c.ordinal)
+    return False
+
+
+def _pair_has_ordinal(understanding: Optional[DatasetUnderstanding],
+                      variables: List[str]) -> bool:
+    """5.3: rank correlation is preferred when either variable is an
+    ordinal scale from stage 2."""
+    if not understanding:
+        return False
+    ordinals = {c.name for c in understanding.columns if c.ordinal}
+    return any(v in ordinals for v in (variables or []))
+
+
+def _diversify_insights(insights: List[Insight]) -> List[Insight]:
+    """6.1: spread claim types round-robin (stable per type) so the top-N —
+    report headline + recommendation chain — never restates one finding
+    family in different words. Deterministic by construction."""
+    buckets: Dict[str, List[Insight]] = {}
+    for insight in insights:
+        buckets.setdefault(insight.claim_type, []).append(insight)
+    diversified: List[Insight] = []
+    while any(buckets.values()):
+        for claim_type in list(buckets):
+            if buckets[claim_type]:
+                diversified.append(buckets[claim_type].pop(0))
+    return diversified
 
 
 def _pair_names(st: StatisticalResult) -> Tuple[str, str]:
@@ -280,25 +390,37 @@ def _build_recommendations(insights: List[Insight]) -> List[Recommendation]:
 
 def _refine_with_llm(run_dir: Path, cfg: Dict[str, Any],
                      log: RunLogger) -> List[str]:
-    from crewai import Crew, Process
+    from shared.llm import complete_json
 
-    agent = build_insight_agent(cfg)
-    task = build_insight_task(agent, run_dir)
-    crew = Crew(agents=[agent], tasks=[task], process=Process.sequential,
-                verbose=False, cache=False)
-    t0 = time.monotonic()
-    result = crew.kickoff(inputs={})
-    log.info(STAGE, "crew kickoff finished",
-             duration_s=round(time.monotonic() - t0, 3))
-
-    outputs = getattr(result, "tasks_output", None) or []
-    raws = [str(getattr(t, "raw", "") or getattr(t, "output", "") or "")
-            for t in outputs]
-    draft = _parse_json(raws[-1] if raws else "")
-    warnings: List[str] = []
-    if not isinstance(draft, dict) or "insights" not in draft:
-        warnings.append("llm_refinement_missing_fallback_to_deterministic")
+    insights = _load_insights_digest(run_dir)
+    system = (
+        "You rewrite the wording of evidence-grounded business insights. "
+        "Numbers, dates, percentages and every non-wording field are "
+        "sacred: never change them, never invent new claims or evidence. "
+        "Return ONLY one JSON object {\"insights\": [...], "
+        "\"recommendations\": [...]}."
+    )
+    user = (
+        "Here is the deterministic, evidence-grounded insight set for this "
+        "run (already claim-validated).\n\n"
+        f"{json.dumps(insights, ensure_ascii=False, indent=2)}\n\n"
+        "Rewrite ONLY the title and description wording of each insight and "
+        "recommendation so they read like a business analyst wrote them. "
+        "Hard rules:\n"
+        "- keep every field except title/description byte-identical "
+        "(insight_id, claim_type, confidence, evidence_ids, "
+        "required_evidence, related_kpis, recommendation_id, insight_id)\n"
+        "- never add, remove or reword numbers, dates or percentages "
+        "already in the text\n"
+        "- never invent new claims or new evidence\n"
+        + data_note()
+    )
+    draft, warnings = complete_json(cfg, "insight", system, user)
+    if draft is None:
+        warnings = warnings or ["llm_refinement_missing_fallback_to_deterministic"]
         return warnings
+    if not isinstance(draft, dict) or "insights" not in draft:
+        return ["llm_refinement_missing_fallback_to_deterministic"]
 
     current = _load_insights_digest(run_dir)
     merged = _merge_refinement(draft, current)
@@ -341,6 +463,68 @@ def _merge_refinement(draft: Dict[str, Any],
                                           original.get("description"))
         recommendations.append(kept)
     return {"insights": insights, "recommendations": recommendations}
+
+
+# ---------------------------------------------------------------------------
+# Task B.3 — insight-linked chart kind overrides
+# ---------------------------------------------------------------------------
+
+
+def _find_cleaned_csv(run_dir: Path) -> Optional[Path]:
+    cleaned = run_dir / "data" / "processed" / "cleaned_data.csv"
+    if cleaned.is_file():
+        return cleaned
+    extracted = sorted((run_dir / "data" / "extracted").glob("*.csv"))
+    return extracted[0] if extracted else None
+
+
+def _apply_insight_chart_overrides(run_dir: Path, insights: List[Insight],
+                                   log: RunLogger) -> None:
+    """Task B.3: chart kind follows the insight claim type, not just the
+    dtype shape table. Priority override above the deterministic planner;
+    affected SVGs are re-rendered so the report never shows a stale shape.
+    """
+    from analysis.chart_planner import apply_insight_kind_overrides
+    from analysis.chart_renderer import render_all
+    from shared.schemas import ChartMetadata, DatasetUnderstanding
+
+    meta_path = run_dir / "metadata" / "chart_metadata.json"
+    if not meta_path.exists() or not insights:
+        return
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        charts = [ChartMetadata(**c) for c in payload.get("charts", [])]
+        understanding = DatasetUnderstanding(**json.loads(
+            (run_dir / "metadata" / "dataset_understanding.json")
+            .read_text(encoding="utf-8")))
+        csv_path = _find_cleaned_csv(run_dir)
+        if csv_path is None:
+            return
+        df = pd.read_csv(csv_path, encoding="utf-8-sig")
+        kpis = _load_kpis(run_dir)
+    except Exception as exc:  # noqa: BLE001 -- never fail the insights stage
+        log.fallback(STAGE, f"insight chart override skipped: {exc}")
+        return
+    if not charts:
+        return
+
+    updated, applied = apply_insight_kind_overrides(
+        charts, insights, df, understanding)
+    if not applied:
+        return
+    render_all(updated, df, kpis, run_dir / "charts")
+    payload["charts"] = [c.model_dump() for c in updated]
+    meta_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8")
+    (run_dir / "outputs" / "insight_chart_overrides.json").write_text(
+        json.dumps({"applied": applied}, ensure_ascii=False, indent=2),
+        encoding="utf-8")
+    for override in applied:
+        log.info(STAGE, "chart kind overridden by insight",
+                 chart_id=override["chart_id"],
+                 from_kind=override["from"], to_kind=override["to"],
+                 reason=override["reason"])
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +604,8 @@ def run_insights(run_dir: str | Path,
         if use_crew:
             warnings.extend(_refine_with_llm(run_dir, cfg, log))
             insights, recommendations, warnings = _reload_validated(run_dir)
+        # Task B.3: link chart kinds to the final insight claim types.
+        _apply_insight_chart_overrides(run_dir, insights, log)
         warnings.extend(_apply_review_gate(run_dir, cfg, log))
         status = "passed"
         summary = _summary(run_dir, insights, recommendations, warnings)

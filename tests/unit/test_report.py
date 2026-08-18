@@ -274,6 +274,122 @@ def test_render_charts_empty() -> None:
     assert "No charts" in html
 
 
+def _chart(chart_id: str = "CH-001", kind: str = "bar",
+           title: str = "Revenue by category",
+           columns: List[str] | None = None,
+           kpi_id: str = "KPI-001") -> Dict:
+    return {
+        "chart_id": chart_id, "kind": kind, "reason": "shape rule",
+        "columns": list(columns) if columns else ["category", "revenue"],
+        "title": title, "kpi_id": kpi_id, "reliability": "high",
+        "chart_path": f"outputs/charts/{chart_id}.svg",
+        "evidence_id": "EV-001",
+    }
+
+
+def _grouped_kpi(group_by: str = "category") -> Dict:
+    kpi = _kpi("KPI-001", "Total revenue", 100.0, "EV-001")
+    kpi["operation"]["group_by"] = [group_by]
+    return kpi
+
+
+def _write_cleaned_csv(run_dir: Path, rows: List[Dict[str, Any]]) -> None:
+    import pandas as pd
+    data_dir = run_dir / "data" / "processed"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(data_dir / "cleaned_data.csv",
+                              index=False, encoding="utf-8-sig")
+
+
+def _charts_payload(html: str) -> Dict[str, Any]:
+    marker = "window.__REPORT_CHARTS__ = "
+    start = html.index(marker) + len(marker)
+    payload = html[start:html.index(";\n(function(){", start)]
+    return json.loads(payload)
+
+
+def test_render_charts_interactive_canvas(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    (run_dir / "outputs" / "charts").mkdir(parents=True, exist_ok=True)
+    (run_dir / "outputs" / "charts" / "CH-001.svg").write_text(
+        "<svg></svg>", encoding="utf-8")
+    _write_cleaned_csv(run_dir, [
+        {"category": "A", "revenue": 10.0},
+        {"category": "B", "revenue": 20.0},
+        {"category": "C", "revenue": 30.0},
+    ])
+    html = render_charts([_chart()], run_dir, [_grouped_kpi()])
+    assert '<canvas id="chart-CH-001"' in html
+    assert 'class="chart-wrap"' in html
+    assert 'class="chart-static' in html  # SVG fallback stays in the DOM
+    assert "window.__REPORT_CHARTS__" in html
+    config = _charts_payload(html)
+    assert config["CH-001"]["type"] == "bar"
+    assert config["CH-001"]["data"]["labels"] == ["A", "B", "C"]
+    assert config["CH-001"]["data"]["datasets"][0]["data"] == [10.0, 20.0, 30.0]
+    assert "scales" in config["CH-001"]["options"]
+
+
+def test_render_charts_interactive_scatter_trend(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    (run_dir / "outputs" / "charts").mkdir(parents=True, exist_ok=True)
+    (run_dir / "outputs" / "charts" / "CH-001.svg").write_text(
+        "<svg></svg>", encoding="utf-8")
+    _write_cleaned_csv(run_dir, [
+        {"x": 1.0, "y": 2.0}, {"x": 2.0, "y": 4.0}, {"x": 3.0, "y": 6.0},
+    ])
+    chart = _chart("CH-001", "scatter", "x vs y", columns=["x", "y"],
+                   kpi_id="KPI-001")
+    html = render_charts([chart], run_dir, [_grouped_kpi("x")])
+    config = _charts_payload(html)
+    assert config["CH-001"]["type"] == "scatter"
+    datasets = config["CH-001"]["data"]["datasets"]
+    assert len(datasets) == 2  # points + trend line
+    assert datasets[1]["label"] == "trend"
+    assert len(datasets[0]["data"]) == 3
+
+
+def test_render_charts_static_kinds_stay_images(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    (run_dir / "outputs" / "charts").mkdir(parents=True, exist_ok=True)
+    for cid in ("CH-001", "CH-002", "CH-003"):
+        (run_dir / "outputs" / "charts" / f"{cid}.svg").write_text(
+            "<svg></svg>", encoding="utf-8")
+    _write_cleaned_csv(run_dir, [{"category": "A", "revenue": 1.0}])
+    charts = [_chart("CH-001", "boxplot"), _chart("CH-002", "heatmap"),
+              _chart("CH-003", "lollipop")]
+    html = render_charts(charts, run_dir, [_grouped_kpi()])
+    assert "<canvas" not in html
+    assert "window.__REPORT_CHARTS__" not in html
+    assert html.count("<img") == 3
+
+
+def test_render_charts_missing_df_falls_back_to_svg(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)  # no cleaned_data.csv
+    (run_dir / "outputs" / "charts").mkdir(parents=True, exist_ok=True)
+    (run_dir / "outputs" / "charts" / "CH-001.svg").write_text(
+        "<svg></svg>", encoding="utf-8")
+    html = render_charts([_chart()], run_dir, [_grouped_kpi()])
+    assert "<canvas" not in html
+    assert '<img src="outputs/charts/CH-001.svg"' in html
+
+
+def test_render_charts_script_tag_escaped(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    (run_dir / "outputs" / "charts").mkdir(parents=True, exist_ok=True)
+    (run_dir / "outputs" / "charts" / "CH-001.svg").write_text(
+        "<svg></svg>", encoding="utf-8")
+    _write_cleaned_csv(run_dir, [
+        {"category": "</script><script>alert(1)</script>", "revenue": 5.0},
+        {"category": "safe", "revenue": 3.0},
+    ])
+    html = render_charts([_chart()], run_dir, [_grouped_kpi()])
+    assert "</script><script>" not in html
+    assert "\\u003c/script>" in html
+    config = _charts_payload(html)
+    assert "</script>" in config["CH-001"]["data"]["labels"][0]
+
+
 def test_render_business_context() -> None:
     ctx = {"file_name": "test.csv", "goal_summary": "Find patterns",
            "context_confidence": 0.9, "generic_mode": False,

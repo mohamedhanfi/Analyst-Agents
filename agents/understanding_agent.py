@@ -19,19 +19,23 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+import pandas as pd
 from crewai import Agent, Crew, Process, Task
+from pydantic import BaseModel, Field
 
 from shared.core.understanding import (
     ColumnProfiler,
+    _is_numeric,
     assemble_understanding,
     build_analysis_plan,
     default_plan,
     detect_domain_heuristic,
 )
-from shared.llm import build_llm
+from shared.llm import build_llm, complete_json
 from shared.logger import RunLogger
+from shared.prompt_guard import data_note
 from shared.schemas import AnalysisPlan, BusinessContext, DataProfile
 from shared.tools import (
     column_profiler_tool,
@@ -47,6 +51,30 @@ UNDERSTANDING_TOOLS = [
     domain_classifier_tool,
     dsl_plan_builder_tool,
 ]
+
+# Task A.2: LLM fallback verdict for identifier-like numeric columns in the
+# ambiguous band (0.3 <= heuristic score < threshold).
+class IdentifierVerdict(BaseModel):
+    role: str = Field(pattern="^(identifier|measure|categorical)$")
+    confidence: float = 0.0
+    reason: str = ""
+
+
+def _validate_identifier_verdicts(payload: Any) -> Tuple[bool, List[str]]:
+    if not isinstance(payload, dict) or not payload:
+        return False, ["response must be a non-empty object"]
+    errors: List[str] = []
+    for name, raw in payload.items():
+        try:
+            verdict = IdentifierVerdict(**raw) if isinstance(raw, dict) else None
+        except Exception as exc:  # noqa: BLE001 -- collected per entry
+            errors.append(f"{name}: {exc}")
+            continue
+        if verdict is None:
+            errors.append(f"{name}: verdict must be an object")
+        elif not 0.0 <= verdict.confidence <= 1.0:
+            errors.append(f"{name}: confidence out of range 0-1")
+    return (not errors), errors
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +119,8 @@ def build_understanding_tasks(agent: Agent, run_dir: str,
             '[{"name": "<col>", "role": "<identifier|temporal|measure|'
             'categorical|dimension|free_text>"}]\n'
             "Python is authoritative — the rules win when you do not "
-            "reclassify."
+            "reclassify.\n"
+            + data_note()
         ),
         expected_output=(
             "The strict JSON list of {name, role} described above. No prose."
@@ -112,9 +141,10 @@ def build_understanding_tasks(agent: Agent, run_dir: str,
             "Step 2: fill the domain_decision skeleton: detected_domain "
             "(short name like 'sales', 'finance', 'hr', ...), "
             "domain_confidence (0.0-1.0, 0.0 when the context is generic), "
-            "entities (business entity names like Product, Customer, "
-            "Order). Use the sample only as a redacted hint.\n"
-            "Return ONLY the filled domain_decision JSON object."
+             "entities (business entity names like Product, Customer, "
+             "Order). Use the sample only as a redacted hint.\n"
+             "Return ONLY the filled domain_decision JSON object.\n"
+             + data_note()
         ),
         expected_output=(
             '{"detected_domain": "...", "domain_confidence": 0.0, '
@@ -136,7 +166,8 @@ def build_understanding_tasks(agent: Agent, run_dir: str,
             '{"plan": ..., "errors": [...]}. If errors is non-empty, fix '
             "the plan and call it again until errors is empty.\n"
             "Return ONLY the final validated plan JSON as returned by the "
-            "tool."
+            "tool.\n"
+            + data_note()
         ),
         expected_output=(
             'The validated plan JSON: {"candidate_kpis": [{"kpi_id", "name",'
@@ -148,6 +179,106 @@ def build_understanding_tasks(agent: Agent, run_dir: str,
 
     return [classify_column_roles, detect_domain_and_entities,
             build_analysis_plan_task]
+
+
+# ---------------------------------------------------------------------------
+# Task A.2 — LLM fallback for the ambiguous identifier band
+# ---------------------------------------------------------------------------
+
+
+def _identifier_threshold(cfg: Dict[str, Any]) -> float:
+    return float(cfg.get("understanding", {})
+                 .get("identifier_confidence_threshold", 0.7))
+
+
+def _resolve_ambiguous_identifiers(
+        facts, profile: DataProfile, cfg: Dict[str, Any],
+        use_crew: bool, log: RunLogger
+) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """LLM fallback (task A.2): reclassify numeric columns in the ambiguous
+    band (0.3 <= heuristic score < threshold) that a naive dtype check would
+    misclassify as measures. Crew mode + opt-in config only; goes through the
+    same complete_json guardrails (retries, schema/validator, cost ledger).
+    Returns (overrides {name: role}, reasons {name: "reason (confidence X)"})."""
+    if not use_crew:
+        return {}, {}
+    u_cfg = cfg.get("understanding", {}) or {}
+    if not bool(u_cfg.get("identifier_llm_fallback", True)):
+        return {}, {}
+    threshold = _identifier_threshold(cfg)
+    ambiguous = [
+        f for f in facts
+        if _is_numeric(f.dtype) and f.suggested_role == "measure"
+        and 0.3 <= f.identifier_score < threshold
+    ]
+    if not ambiguous:
+        return {}, {}
+
+    sample_by_col: Dict[str, List[Any]] = {}
+    for record in profile.sample or []:
+        for f in ambiguous:
+            values = sample_by_col.setdefault(f.name, [])
+            if len(values) < 10 and f.name in record:
+                values.append(record[f.name])
+
+    system = (
+        "You decide whether a numeric column is an ID-like value (phone "
+        "number, postal code, national id, account number...) or a real "
+        "measure. You see only the column name plus up to 10 redacted "
+        "sample values — never the raw dataset. For each column return "
+        'one object {"<column>": {"role": "identifier"|"measure"|'
+        '"categorical", "confidence": 0.0-1.0, "reason": "<short reason>"}}. '
+        "Return ONLY one JSON object."
+    )
+    payload_json = json.dumps(
+        {f.name: {"sample": sample_by_col.get(f.name, [])}
+         for f in ambiguous}, ensure_ascii=False, indent=2)
+    user = (
+        "Columns whose numeric role is ambiguous. Decide each one:\n"
+        f"{payload_json}\n"
+        "Examples: a phone_number with constant digit length -> identifier; "
+        "a revenue column with decimals -> measure; an ID-like code -> "
+        "identifier.\n"
+        + data_note()
+    )
+    payload, warnings = complete_json(
+        cfg, "understanding", system, user,
+        validator=_validate_identifier_verdicts)
+    for warning in warnings:
+        log.fallback(STAGE, warning)
+    if not isinstance(payload, dict):
+        return {}, {}
+
+    overrides: Dict[str, str] = {}
+    reasons: Dict[str, str] = {}
+    for name, raw in payload.items():
+        if not isinstance(raw, dict):
+            continue
+        try:
+            verdict = IdentifierVerdict(**raw)
+        except Exception:  # noqa: BLE001 -- skip malformed entries
+            continue
+        if verdict.role != "measure":
+            overrides[name] = verdict.role
+        if verdict.role == "identifier":
+            reasons[name] = (f"{verdict.reason} "
+                             f"(confidence {verdict.confidence:.2f})")
+    if overrides:
+        log.info(STAGE, "identifier fallback applied",
+                 columns=list(overrides), reasons=reasons)
+    return overrides, reasons
+
+
+def _apply_identifier_reasons(understanding, reasons: Dict[str, str]) -> None:
+    """Record LLM identifier-fallback reasons in dataset_understanding.json
+    so every identifier decision is auditable (task A.2)."""
+    if not reasons:
+        return
+    for column in understanding.columns:
+        if column.role == "identifier" and column.name in reasons:
+            column.override_source = "llm"
+            column.override_reason = (
+                f"identifier fallback: {reasons[column.name]}")
 
 
 # ---------------------------------------------------------------------------
@@ -184,13 +315,30 @@ def run_understanding(run_dir: str | Path,
     return summary
 
 
+def _load_extracted_df(run_dir: Path) -> Optional[pd.DataFrame]:
+    """Best-effort raw extracted CSV for the value-shape signals of the
+    identifier heuristic (A.1). None -> name-only detection."""
+    extracted = run_dir / "data" / "extracted"
+    if not extracted.is_dir():
+        return None
+    files = sorted(extracted.glob("*.csv"))
+    if not files:
+        return None
+    try:
+        return pd.read_csv(files[0], encoding="utf-8-sig")
+    except Exception:  # noqa: BLE001 -- heuristic is best-effort
+        return None
+
+
 def _run_deterministic(run_dir: Path, cfg: Dict[str, Any],
                        log: RunLogger) -> Dict[str, Any]:
     profile = _load_profile(run_dir)
     context = _load_context(run_dir)
 
     t0 = time.monotonic()
-    facts = ColumnProfiler().profile_columns(profile)
+    df = _load_extracted_df(run_dir)
+    facts = ColumnProfiler().profile_columns(
+        profile, df=df, identifier_threshold=_identifier_threshold(cfg))
     log.tool_call(STAGE, "column_profiler_tool", "passed",
                   time.monotonic() - t0)
 
@@ -200,13 +348,17 @@ def _run_deterministic(run_dir: Path, cfg: Dict[str, Any],
                   time.monotonic() - t0)
 
     t0 = time.monotonic()
-    plan = default_plan(profile)
+    plan = default_plan(profile, df=df)
     log.tool_call(STAGE, "dsl_plan_builder_tool", "passed",
                   time.monotonic() - t0)
 
+    # A.2: LLM fallback only in crew mode; deterministic path never calls it.
+    overrides, reasons = _resolve_ambiguous_identifiers(
+        facts, profile, cfg, use_crew=False, log=log)
     understanding = assemble_understanding(
-        profile=profile, facts=facts, role_overrides={},
+        profile=profile, facts=facts, role_overrides=overrides,
         domain=(domain, confidence, []), context=context, limitations=[])
+    _apply_identifier_reasons(understanding, reasons)
     _save_artifacts(run_dir, understanding, plan)
 
     return {
@@ -232,7 +384,7 @@ def _run_crew(run_dir: Path, cfg: Dict[str, Any],
              duration_s=round(time.monotonic() - t0, 3))
 
     understanding, plan, warnings = _finalize_understanding(
-        run_dir, result)
+        run_dir, result, cfg=cfg, log=log)
     for warning in warnings:
         log.fallback(STAGE, warning)
 
@@ -248,12 +400,19 @@ def _run_crew(run_dir: Path, cfg: Dict[str, Any],
     }
 
 
-def _finalize_understanding(run_dir: Path, result) -> tuple[
+def _finalize_understanding(run_dir: Path, result,
+                            cfg: Optional[Dict[str, Any]] = None,
+                            log: Optional[RunLogger] = None) -> tuple[
         Any, AnalysisPlan, List[str]]:
+    """Python-authoritative finalize: validate/rebuild every artifact."""
+    cfg = cfg or load_config(require_key=False)
+    log = log or RunLogger(run_dir, run_dir.name)
     """Python-authoritative finalize: validate/rebuild every artifact."""
     profile = _load_profile(run_dir)
     context = _load_context(run_dir)
-    facts = ColumnProfiler().profile_columns(profile)
+    df = _load_extracted_df(run_dir)
+    facts = ColumnProfiler().profile_columns(
+        profile, df=df, identifier_threshold=_identifier_threshold(cfg))
     warnings: List[str] = []
 
     outputs = getattr(result, "tasks_output", None) or []
@@ -266,7 +425,7 @@ def _finalize_understanding(run_dir: Path, result) -> tuple[
 
     plan, plan_errors = build_analysis_plan(raw_plan)
     if raw_plan is None or not raw_plan.get("candidate_kpis"):
-        plan = default_plan(profile)
+        plan = default_plan(profile, df=df)
         warnings.append("llm_plan_failed_default_used")
     elif plan_errors:
         warnings.append("llm_plan_partially_rejected")
@@ -276,9 +435,15 @@ def _finalize_understanding(run_dir: Path, result) -> tuple[
         domain = (domain[0], domain[1], [])
         warnings.append("llm_domain_failed_heuristic_used")
 
+    # A.2: LLM fallback for the ambiguous identifier band (crew mode only).
+    overrides, reasons = _resolve_ambiguous_identifiers(
+        facts, profile, cfg, use_crew=True, log=log)
+    role_overrides = {**role_overrides, **overrides}
+
     understanding = assemble_understanding(
         profile=profile, facts=facts, role_overrides=role_overrides,
         domain=domain, context=context, limitations=plan_errors)
+    _apply_identifier_reasons(understanding, reasons)
     _save_artifacts(run_dir, understanding, plan)
     return understanding, plan, warnings
 

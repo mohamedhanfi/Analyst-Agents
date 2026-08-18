@@ -110,6 +110,127 @@ def _generate(tmp_path: Path, kpis: List[Dict[str, Any]],
     return insights, recommendations, warnings
 
 
+def _with_understanding(tmp_path: Path,
+                        kpis: List[Dict[str, Any]],
+                        stats: List[Dict[str, Any]],
+                        registry: List[Dict[str, Any]],
+                        columns: List[Dict[str, Any]]) -> Path:
+    """Semantic-sweep builder: run dir that also carries stage-2 roles."""
+    run_dir = _make_run(tmp_path, kpis, stats, registry)
+    (run_dir / "metadata" / "dataset_understanding.json").write_text(
+        json.dumps({"detected_domain": "generic", "domain_confidence": 0.0,
+                    "columns": columns}), encoding="utf-8")
+    return run_dir
+
+
+def _understanding_column(name: str, role: str, ordinal: bool = False,
+                          identifier_score: float = 0.0) -> Dict[str, Any]:
+    return {"name": name, "role": role, "dtype": "float64", "nunique": 10,
+            "nullable": False, "override_source": "rules",
+            "override_reason": "test", "identifier_score": identifier_score,
+            "ordinal": ordinal}
+
+
+# ---------------------------------------------------------------------------
+# semantic sweep: 6.1 diversity, 6.2 identifier gate, 2.3 ordinal framing,
+# 5.3 spearman preference, 6.3 confidence heuristic golden validation
+# ---------------------------------------------------------------------------
+
+
+def test_insights_diversify_claim_types_round_robin(tmp_path):
+    """6.1: the top-N (report + recommendations) never restates one
+    finding family — first insight of every claim type, then repeats."""
+    insights, _, _ = _generate(
+        tmp_path,
+        [_kpi("KPI-001", "Total revenue", "sum", "revenue", 100.0, "EV-001"),
+         _kpi("KPI-002", "Total quantity", "sum", "quantity", 50.0, "EV-002"),
+         _kpi("KPI-003", "Total cost", "sum", "cost", 20.0, "EV-003"),
+         _kpi("KPI-004", "Average revenue", "mean", "revenue", 10.0,
+              "EV-004")],
+        [_STRONG_CORR],
+        _registry(["EV-001", "EV-002", "EV-003", "EV-004", "EV-010"]))
+    order = [i.claim_type for i in insights]
+    assert order[0] == "DESCRIPTIVE"          # first of its family
+    assert order[1] == "CORRELATIONAL"        # second family first
+    assert order[2:] == ["DESCRIPTIVE", "DESCRIPTIVE", "DESCRIPTIVE"]
+
+
+def test_insights_never_generated_on_identifier_columns(tmp_path):
+    """6.2: even if an identifier KPI slips through upstream, no insight
+    rests on it."""
+    kpis = [_kpi("KPI-001", "Total phone_number", "sum", "phone_number",
+                 89618.13, "EV-001"),
+            _kpi("KPI-002", "Total revenue", "sum", "revenue", 89618.13,
+                 "EV-002")]
+    run_dir = _with_understanding(
+        tmp_path, kpis, [], _registry(["EV-001", "EV-002"]),
+        [_understanding_column("phone_number", "identifier",
+                               identifier_score=0.95),
+         _understanding_column("revenue", "measure")])
+    insights, _, _ = _generate_insights(run_dir, RunLogger(run_dir, "run"))
+    titles = {i.title for i in insights}
+    assert "Total revenue" in titles
+    assert "Total phone_number" not in titles
+
+
+def test_insights_correlation_prefers_spearman_for_ordinal(tmp_path):
+    """5.3: ordinal pairs — the rank correlation entry is the insight."""
+    pearson = _stat("ST-CORR-001", "correlation", "pearson",
+                    ["rating", "revenue"], 0.72, 0.001, "EV-010")
+    spearman = _stat("ST-CORR-002", "correlation", "spearman",
+                     ["rating", "revenue"], 0.81, 0.0005, "EV-011",
+                     recommended_method="spearman")
+    run_dir = _with_understanding(
+        tmp_path, _BASE_KPIS, [pearson, spearman],
+        _registry(["EV-001", "EV-002", "EV-010", "EV-011"]),
+        [_understanding_column("rating", "measure", ordinal=True),
+         _understanding_column("revenue", "measure")])
+    insights, _, _ = _generate_insights(run_dir, RunLogger(run_dir, "run"))
+    corr = [i for i in insights if i.claim_type == "CORRELATIONAL"]
+    assert len(corr) == 1
+    assert "r = 0.81" in corr[0].description      # spearman value used
+    assert corr[0].evidence_ids == ["EV-011"]
+
+
+def test_insights_ordinal_scale_framing(tmp_path):
+    """2.3: a mean rating of 3.4 must read as an ordered-category index,
+    not a continuous measurement."""
+    kpis = [_kpi("KPI-001", "Average rating", "mean", "rating", 3.4,
+                 "EV-001")]
+    run_dir = _with_understanding(
+        tmp_path, kpis, [], _registry(["EV-001"]),
+        [_understanding_column("rating", "measure", ordinal=True)])
+    insights, _, _ = _generate_insights(run_dir, RunLogger(run_dir, "run"))
+    desc = insights[0].description
+    assert "ordinal scale" in desc
+    assert "ordered categories" in desc
+
+
+def test_descriptive_confidence_heuristic_golden(tmp_path):
+    """6.3: the sum/count/min/max = high vs mean/median = medium heuristic
+    validated against golden expectations."""
+    kpis = [
+        _kpi("KPI-001", "Total revenue", "sum", "revenue", 100.0, "EV-001"),
+        _kpi("KPI-002", "revenue count", "count", "revenue", 10, "EV-002"),
+        _kpi("KPI-003", "Min revenue", "min", "revenue", 5.0, "EV-003"),
+        _kpi("KPI-004", "Max revenue", "max", "revenue", 20.0, "EV-004"),
+        _kpi("KPI-005", "Average revenue", "mean", "revenue", 10.0,
+             "EV-005"),
+        _kpi("KPI-006", "Median revenue", "median", "revenue", 9.0,
+             "EV-006"),
+    ]
+    insights, _, _ = _generate(
+        tmp_path, kpis, [],
+        _registry([f"EV-00{i}" for i in range(1, 7)]))
+    by_title = {i.title: i for i in insights}
+    assert by_title["Total revenue"].confidence == "high"
+    assert by_title["revenue count"].confidence == "high"
+    assert by_title["Min revenue"].confidence == "high"
+    assert by_title["Max revenue"].confidence == "high"
+    assert by_title["Average revenue"].confidence == "medium"
+    assert by_title["Median revenue"].confidence == "medium"
+
+
 # ---------------------------------------------------------------------------
 # claim taxonomy gating
 # ---------------------------------------------------------------------------

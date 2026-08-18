@@ -133,7 +133,6 @@ insight-forge/
 ├── cache/                       # key→run_id index (idempotency)
 └── tests/
     ├── unit/                    # 487 tests passing
-    ├── Flow_review/             # live web viewer (app.py) for the pipeline
     └── fixtures/                # test templates (report_minimal.html, etc.)
 ```
 
@@ -578,7 +577,7 @@ insight-forge/
 │       ├── logs/                # LLM/tool logs
 │       └── master_manifest.json
 ├── cache/                       # key→run_id index (idempotency)
-└── tests/                       # unit/ + Flow_review/ live viewer + fixtures/
+└── tests/                       # unit/ · e2e/ · integration/ · golden/ · security/ · fixtures/
 ```
 
 </details>
@@ -718,6 +717,17 @@ A single root `config.yaml` holds:
 - `encrypt_at_rest` — AES-256 encryption toggle for `runs/` data
 
 `.env.example` is specified to hold LLM provider API keys, loaded via `shared/utils.py`, never committed. The spec does not enumerate exact variable names.
+
+**HTTP API / web UI (new in v4.7):**
+
+| Env var | Purpose |
+|---|---|
+| `INSIGHT_FORGE_API_KEY` | When set, the web app requires `X-API-Key` on every `POST /api/start` / `POST /api/demo` call (401 otherwise); `/api/state` exposes `auth_required` so the UI can show the key field |
+| `INSIGHT_FORGE_ENC_KEY` | Base64 Fernet key for `encrypt_at_rest` (`retention` section); when unset the app auto-generates and persists `.enc_key` (git-ignored) |
+
+**Queueing:** uploads run on a single background worker (FIFO). While a job is running, new requests are queued — `/api/state` reports `queued` count and the UI shows it. No job is ever dropped.
+
+**Security headers (v4.7):** every HTML response carries `Content-Security-Policy: default-src 'self'` (inline script/style allowed, no external origins), `X-Content-Type-Options: nosniff`, and `X-Frame-Options: DENY`.
 
 </details>
 

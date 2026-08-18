@@ -31,6 +31,7 @@ from analysis.generic import run_statistical_suite
 from shared.formatting import parse_json as _parse_json
 from shared.llm import build_llm
 from shared.logger import RunLogger
+from shared.prompt_guard import data_note
 from shared.schemas import (AnalysisPlan, ChartMetadata, CleaningResult,
                             DatasetUnderstanding, KpiResult, StatisticalResult)
 from shared.tools import (
@@ -89,8 +90,9 @@ def build_analysis_tasks(agent: Agent, run_dir: str | Path,
             "already DSL-whitelisted — never invent formulas).\n"
             "Step 2: review each candidate against the cleaned data; drop "
             "only candidates that are meaningless (e.g. no signal, constant "
-            "column). Prefer keeping the plan as-is.\n"
-            "Return ONLY the JSON {\"kpi_ids\": [\"KPI-001\", ...]}."
+             "column). Prefer keeping the plan as-is.\n"
+             "Return ONLY the JSON {\"kpi_ids\": [\"KPI-001\", ...]}.\n"
+             + data_note()
         ),
         expected_output='{"kpi_ids": ["KPI-001", ...]}',
         agent=agent,
@@ -107,7 +109,8 @@ def build_analysis_tasks(agent: Agent, run_dir: str | Path,
             "Both return JSON with evidence_id per value. Every number is "
             "Python-computed; report only what the tools returned.\n"
             "Return ONLY the JSON {\"status\": \"computed\", "
-            "\"kpi_count\": <n>, \"test_count\": <m>}."
+            "\"kpi_count\": <n>, \"test_count\": <m>}.\n"
+            + data_note()
         ),
         expected_output='{"status": "computed", "kpi_count": <n>, "test_count": <m>}',
         agent=agent,
@@ -124,7 +127,8 @@ def build_analysis_tasks(agent: Agent, run_dir: str | Path,
             "stays Python's call. Charts with reliability 'low_n' should rank "
             "last.\n"
             "Return ONLY the JSON {\"rank\": [{\"chart_id\", \"reason\"}], "
-            "\"charts_truncated\": bool}."
+            "\"charts_truncated\": bool}.\n"
+            + data_note()
         ),
         expected_output=(
             '{"rank": [{"chart_id": "CH-001", "reason": "..."}], '
@@ -255,8 +259,11 @@ def _compute(run_dir: Path, cfg: Dict[str, Any],
                   time.monotonic() - t0, note=f"{len(stats)} results")
 
     t0 = time.monotonic()
+    novelty_penalty = float(
+        cfg.get("charts", {}).get("novelty_penalty", 0.0) or 0.0)
     charts, truncated = plan_charts(df, plan, understanding, registry,
-                                    max_chart_count=max_chart_count)
+                                    max_chart_count=max_chart_count,
+                                    novelty_penalty=novelty_penalty)
     log.tool_call(STAGE, "chart_planner_tool", "passed",
                   time.monotonic() - t0,
                   note=f"{len(charts)} charts, truncated={truncated}")

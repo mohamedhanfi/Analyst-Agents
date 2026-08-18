@@ -8,6 +8,10 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+# Audit L: artifact schema version — bumped whenever a persisted artifact
+# changes shape; cache-hit and run-comparison logic checks it explicitly.
+SCHEMA_VERSION = "1.1"
+
 # ---------------------------------------------------------------------------
 # Stage 1 — Ingestion (§2.1)
 # ---------------------------------------------------------------------------
@@ -62,6 +66,7 @@ class ValidationResult(BaseModel):
 
 class DataProfile(BaseModel):
     """metadata/data_profile.json — shape, types, nulls, dups, PII."""
+    schema_version: str = SCHEMA_VERSION
     file_name: str
     file_hash: str                                # "sha256:<hex>"
     row_count: int
@@ -78,6 +83,7 @@ class DataProfile(BaseModel):
 
 class BusinessContext(BaseModel):
     """knowledge/business_context.json — user answers, or Generic Mode."""
+    schema_version: str = SCHEMA_VERSION
     file_name: str
     sheet_used: Optional[str] = None              # which sheet was analysed
     business_questions: List[str] = Field(default_factory=list)
@@ -85,6 +91,10 @@ class BusinessContext(BaseModel):
     goal_summary: str = ""
     context_confidence: float = 0.0               # 0.0 => Generic Mode (§3.5)
     generic_mode: bool = False                    # true when user timed out
+    answered_by: str = ""                         # identity of the human (§8)
+    answer_log: List[Dict[str, Any]] = Field(default_factory=list)
+    #   [{"question": str, "answer": str, "ts": float}]
+    schema_version: str = SCHEMA_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -101,10 +111,19 @@ class ColumnUnderstanding(BaseModel):
     dtype: str
     nunique: int
     nullable: bool
+    override_source: Literal["rules", "llm"] = "rules"
+    override_reason: str = ""
+    # Semantic heuristic (identifier detection, task A): 0-1 confidence
+    # that a numeric column is ID-like and must never be aggregated.
+    identifier_score: float = 0.0
+    # Semantic sweep 2.3: ordinal scale (rating/satisfaction/...) — CAN be
+    # averaged, but insights must phrase it as an ordered-category index.
+    ordinal: bool = False
 
 
 class DatasetUnderstanding(BaseModel):
     """metadata/dataset_understanding.json"""
+    schema_version: str = SCHEMA_VERSION
     detected_domain: str
     domain_confidence: float
     entities: List[str] = Field(default_factory=list)
@@ -142,6 +161,7 @@ class KpiCandidate(BaseModel):
 
 class AnalysisPlan(BaseModel):
     """metadata/analysis_plan.json — DSL ops only, no freeform formulas."""
+    schema_version: str = SCHEMA_VERSION
     candidate_kpis: List[KpiCandidate] = Field(default_factory=list)
     statistical_tests: List[str] = Field(default_factory=list)
     has_temporal_data: bool = False
@@ -155,6 +175,7 @@ class AnalysisPlan(BaseModel):
 
 class DataQualityReport(BaseModel):
     """metadata/data_quality_report.json"""
+    schema_version: str = SCHEMA_VERSION
     status: Literal["passed", "needs_repair"]
     invalid: Dict[str, List[str]] = Field(default_factory=dict)
     missingness: Dict[str, Any] = Field(default_factory=dict)
@@ -169,6 +190,7 @@ class DataQualityReport(BaseModel):
 
 class CleaningResult(BaseModel):
     """metadata/cleaning_result.json"""
+    schema_version: str = SCHEMA_VERSION
     attempt: int = 1
     rows_before: int
     rows_after: int
@@ -191,6 +213,7 @@ ChartKind = Literal["bar", "barh", "line", "doughnut",
 class KpiResult(BaseModel):
     """One computed KPI in outputs/kpis.json.
 
+    schema_version: str = SCHEMA_VERSION
     value is a float for measures, int for counts, and may be a str when a
     min/max lands on a temporal column; None when the computation failed.
     """
@@ -205,6 +228,7 @@ class KpiResult(BaseModel):
 class StatisticalResult(BaseModel):
     """One result in outputs/statistical_results.json.
 
+    schema_version: str = SCHEMA_VERSION
     extra carries test-specific fields (F, df, eta^2, groups compared, ...)
     that do not fit the common surface — tightened when the suite lands.
     """
@@ -224,6 +248,7 @@ class StatisticalResult(BaseModel):
 
 class ChartMetadata(BaseModel):
     """One planner decision in metadata/chart_metadata.json (shape rule hit)."""
+    schema_version: str = SCHEMA_VERSION
     chart_id: str
     kind: ChartKind
     reason: str
@@ -263,6 +288,7 @@ ClaimType = Literal["DESCRIPTIVE", "COMPARATIVE", "CORRELATIONAL",
 
 class Insight(BaseModel):
     """One evidence-grounded insight in outputs/insights.json."""
+    schema_version: str = SCHEMA_VERSION
     insight_id: str
     claim_type: ClaimType
     title: str
@@ -275,6 +301,7 @@ class Insight(BaseModel):
 
 class Recommendation(BaseModel):
     """Hedged recommendation in outputs/insights.json (§2.6 chain)."""
+    schema_version: str = SCHEMA_VERSION
     recommendation_id: str
     insight_id: str          # must reference an existing insight_id
     title: str
@@ -288,6 +315,7 @@ class Recommendation(BaseModel):
 
 class ReportResult(BaseModel):
     """metadata/report_result.json"""
+    schema_version: str = SCHEMA_VERSION
     status: Literal["rendered", "failed"]
     report_path: str | None = None
     locale: str = "en"
@@ -303,6 +331,7 @@ class ReportResult(BaseModel):
 class QaVerdict(BaseModel):
     """metadata/qa_verdict.json — deterministic verdict + informational score.
 
+    schema_version: str = SCHEMA_VERSION
     score is informational only; the verdict is decided purely by the
     logical conditions (§2.8).
     """

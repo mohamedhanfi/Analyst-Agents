@@ -15,6 +15,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Union
 
+from shared.core.semantic_guards import (
+    IDENTIFIER_NAME_RE,          # canonical pattern (semantic sweep §0)
+    IdentifierSignal,
+    is_code_like,
+    is_identifier_like,
+    is_ordinal_like,
+)
 from shared.dsl_validator import validate_operation
 from shared.schemas import (
     AnalysisPlan,
@@ -26,6 +33,10 @@ from shared.schemas import (
     DatasetUnderstanding,
     KpiCandidate,
 )
+
+# Re-exports for callers that predate the shared semantic_guards module —
+# the canonical implementations live there now so no stage duplicates them.
+detect_identifier_like = is_identifier_like
 
 ALLOWED_STATISTICAL_TESTS = frozenset(
     {"descriptive", "correlation", "trend", "anova"})
@@ -40,6 +51,13 @@ class ColumnFacts:
     nullable: bool
     suggested_role: ColumnRole
     alternate_roles: List[ColumnRole] = field(default_factory=list)
+    # Identifier-detection heuristic (task A): confidence + signals.
+    identifier_score: float = 0.0
+    identifier_signals: List[str] = field(default_factory=list)
+    # Semantic sweep 2.2/2.3: encoded-categorical and ordinal flags so
+    # downstream stages phrase the column correctly.
+    code_like: bool = False
+    ordinal: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -49,7 +67,67 @@ class ColumnFacts:
             "nullable": self.nullable,
             "suggested_role": self.suggested_role,
             "alternate_roles": list(self.alternate_roles),
+            "identifier_score": self.identifier_score,
+            "code_like": self.code_like,
+            "ordinal": self.ordinal,
         }
+
+
+@dataclass
+class IdentifierSignal:
+    """Result of detect_identifier_like: confidence 0-1 + human-readable
+    signals explaining the score (audited into dataset_understanding.json)."""
+    score: float
+    signals: List[str]
+
+
+def detect_identifier_like(column_name: str,
+                           series: Union["pd.Series", None] = None
+                           ) -> IdentifierSignal:
+    """Semantic pre-check (task A.1): is a numeric column really a measure,
+    or an ID-like value that must never be aggregated?
+
+    Runs BEFORE any numeric column defaults to measure. Combines a name
+    pattern match with value-shape signals (digit-length consistency,
+    integral values, unique ratio, leading zeros). Returns a confidence
+    score; callers force role=identifier above the configured threshold
+    and may consult the LLM in the ambiguous band (0.3–threshold).
+    """
+    import pandas as pd  # local: keeps this module import-light
+
+    signals: List[str] = []
+    name = (column_name or "").strip().lower()
+    score = 0.0
+    if name and IDENTIFIER_NAME_RE.search(name):
+        signals.append("name matches identifier pattern")
+        score += 0.75
+
+    if series is not None:
+        vals = pd.Series(series).dropna()
+        if len(vals) == 0:
+            return IdentifierSignal(min(score, 1.0), signals)
+        numeric = pd.to_numeric(vals, errors="coerce").dropna()
+        if len(numeric) > 0:
+            if float((numeric % 1 == 0).mean()) >= 0.99:
+                signals.append("all values integral (no meaningful sum)")
+                score += 0.2
+            try:
+                lengths = numeric.abs().apply(lambda v: len(str(int(v))))
+            except (ValueError, OverflowError):  # pragma: no cover
+                lengths = None
+            if lengths is not None and len(lengths) > 0:
+                med = float(lengths.median())
+                if float((abs(lengths - med) <= 1).mean()) >= 0.9:
+                    signals.append("digit length nearly constant")
+                    score += 0.2
+            if float(numeric.nunique()) / len(numeric) > 0.9:
+                signals.append("high cardinality (unique ratio > 0.9)")
+                score += 0.15
+        str_vals = vals.astype(str).str.strip()
+        if str_vals.str.match(r"^0[0-9]+$").any():
+            signals.append("leading zeros in original values")
+            score += 0.4
+    return IdentifierSignal(min(score, 1.0), signals)
 
 
 def _is_numeric(dtype: str) -> bool:
@@ -63,6 +141,10 @@ def _is_temporal(dtype: str) -> bool:
 ID_NAME_PATTERN = re.compile(r"(?:_|^)(id|code|key|sku)$", re.IGNORECASE)
 TEMPORAL_NAME_KEYWORDS = ("date", "datetime", "time", "year", "month",
                           "week", "day", "timestamp", "period", "quarter")
+
+# Semantic identifier patterns live in shared.core.semantic_guards (§0) —
+# imported at the top of this module so every layer shares one source of
+# truth (KPI sanity gate A.3, correlation gate 5.2, insight gate 6.2, QA 8.1).
 
 
 def _looks_like_id(name: str) -> bool:
@@ -113,9 +195,17 @@ def infer_role(dtype: str, nunique: int, row_count: int,
 
 
 class ColumnProfiler:
-    """Facts + role guesses derived from a DataProfile (metadata only)."""
+    """Facts + role guesses derived from a DataProfile (metadata only).
 
-    def profile_columns(self, profile: DataProfile) -> List[ColumnFacts]:
+    ``df`` (optional) adds the value-shape signals of the identifier
+    heuristic (task A.1) — pass the extracted DataFrame when available;
+    without it only the name-pattern signal applies.
+    """
+
+    def profile_columns(self, profile: DataProfile,
+                        df: Union["pd.DataFrame", None] = None,
+                        identifier_threshold: float = 0.7
+                        ) -> List[ColumnFacts]:
         row_count = int(profile.row_count)
         facts: List[ColumnFacts] = []
         for name in profile.columns:
@@ -123,10 +213,31 @@ class ColumnProfiler:
             nunique = int(profile.nunique.get(name, 0))
             nullable = int(profile.missing_values.get(name, 0)) > 0
             role, alternates = infer_role(dtype, nunique, row_count, name)
+            series = (df[name] if df is not None
+                      and name in df.columns else None)
+            signal = detect_identifier_like(name, series)
+            code_like = is_code_like(name, series)
+            # 2.2 beats A.1 for *encoded codes*: a low-cardinality repeating
+            # integer (gender_code 0/1, status 1/2/3) is a categorical even
+            # when its name matches an identifier pattern (code$); IDs are
+            # all-unique, which is_code_like excludes.
+            if (_is_numeric(dtype) and role == "measure" and code_like):
+                role = "categorical"
+                alternates = ["measure"]
+            # A.1: a numeric column with a confident identifier signal is
+            # never defaulted to measure — skip the dtype default entirely.
+            elif (_is_numeric(dtype) and role == "measure"
+                    and signal.score >= identifier_threshold):
+                role = "identifier"
+                alternates = ["measure"]
             facts.append(ColumnFacts(
                 name=name, dtype=dtype, nunique=nunique,
                 nullable=nullable, suggested_role=role,
                 alternate_roles=alternates,
+                identifier_score=signal.score,
+                identifier_signals=list(signal.signals),
+                code_like=code_like,
+                ordinal=is_ordinal_like(name, series),
             ))
         return facts
 
@@ -243,6 +354,9 @@ def apply_role_overrides(facts: List[ColumnFacts],
     into one of its `alternate_roles` (the ambiguous cases from the §2.2
     table) or into "identifier" by name/semantics (e.g. numeric zip_code);
     any other override is rejected and the rule-based role kept.
+
+    Every accepted/rejected override is logged with its reason (§8 audit):
+    the returned objects carry `override_source` + `override_reason`.
     """
     columns: List[ColumnUnderstanding] = []
     for f in facts:
@@ -259,9 +373,31 @@ def apply_role_overrides(facts: List[ColumnFacts],
                             "temporal"}
             if override in allowed and override in ColumnRole.__args__:
                 role = override
+                reason = (f"accepted: '{f.suggested_role}' -> '{override}' "
+                          f"(in alternate_roles or identifier)")
+            else:
+                reason = (f"rejected: '{override}' not allowed for "
+                          f"'{f.suggested_role}' — rule-based role kept")
+        else:
+            reason = "no override — rule-based role kept"
+        # Task A: a heuristic-identified identifier logs its signals, so
+        # every identifier decision is auditable in the understanding JSON.
+        if (override is None and f.suggested_role == "identifier"
+                and f.identifier_score > 0 and not f.identifier_signals):
+            reason = (f"identifier heuristic: name pattern match "
+                      f"(score {f.identifier_score:.2f})")
+        elif (override is None and f.suggested_role == "identifier"
+                and f.identifier_score > 0):
+            reason = ("identifier heuristic: "
+                      + "; ".join(f.identifier_signals)
+                      + f" (score {f.identifier_score:.2f})")
         columns.append(ColumnUnderstanding(
             name=f.name, role=role, dtype=f.dtype,
             nunique=f.nunique, nullable=f.nullable,
+            override_source="llm" if override is not None else "rules",
+            override_reason=reason,
+            identifier_score=f.identifier_score,
+            ordinal=f.ordinal,
         ))
     return columns
 
@@ -298,11 +434,16 @@ def detect_domain_heuristic(context: BusinessContext) -> tuple[str, float]:
     return "generic", 0.0
 
 
-def default_plan(profile: DataProfile) -> AnalysisPlan:
+def default_plan(profile: DataProfile,
+                 df: Union["pd.DataFrame", None] = None) -> AnalysisPlan:
     """Deterministic fallback plan — used by the non-LLM path and when the
     crew fails to produce a valid plan. Whitelist ops only, by construction.
+
+    ``df`` (optional) enables the value-shape identifier/code heuristics
+    (A.1/2.2) so the plan never proposes aggregations on columns that the
+    df-aware profiler classified as identifiers or codes.
     """
-    facts = ColumnProfiler().profile_columns(profile)
+    facts = ColumnProfiler().profile_columns(profile, df=df)
     measures = [f.name for f in facts if f.suggested_role == "measure"]
     identifiers = [f.name for f in facts if f.suggested_role == "identifier"]
     temporals = [f.name for f in facts if f.suggested_role == "temporal"]

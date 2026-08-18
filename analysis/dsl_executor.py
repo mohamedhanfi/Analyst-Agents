@@ -18,11 +18,29 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from analysis.evidence import EvidenceRegistry
+from shared.core.semantic_guards import aggregation_is_meaningful
 from shared.dsl_validator import validate_operation
 from shared.schemas import DslOperation, KpiCandidate, KpiResult
 
 _AGG_FUNCTIONS = {"sum", "mean", "median", "min", "max", "std", "count",
                   "nunique"}
+
+# Task A.3 sanity gate: aggregations that are meaningless on ID-like values.
+# Kept in sync with the whitelist — mean/sum/avg only.
+_BLOCKED_IDENTIFIER_FUNCTIONS = frozenset({"sum", "mean", "avg"})
+
+
+def is_blocked_identifier_aggregation(op: DslOperation) -> bool:
+    """Defense-in-depth gate (task A.3): no mean/sum/avg may ever run on a
+    column whose name matches an identifier pattern, regardless of the role
+    assigned upstream. A single bad classification can never produce a
+    nonsensical KPI like mean(phone_number). Uses the shared §0 gate so the
+    correlation engine and QA apply the same rule."""
+    if op.function not in _BLOCKED_IDENTIFIER_FUNCTIONS:
+        return False
+    column = getattr(op, "column", None) or ""
+    ok, _ = aggregation_is_meaningful(column, None, op.function)
+    return not ok
 
 _PERIOD_ALIASES = {
     "month": "MoM", "monthly": "MoM", "mom": "MoM",
@@ -176,6 +194,13 @@ def _to_json_scalar(value: Any) -> Any:
 def _execute_correlation(df: pd.DataFrame, op: DslOperation) -> OperationResult:
     a = _as_numeric(df, op.column_a)
     b = _as_numeric(df, op.column_b)
+    # 5.2: correlation on identifier-like pairs is meaningless — same §0
+    # gate the KPI engine uses, so no locally-duplicated "is this column
+    # meaningful" logic lives here.
+    for col, series in ((op.column_a, a), (op.column_b, b)):
+        ok, reason = aggregation_is_meaningful(col, series, "correlation")
+        if not ok:
+            raise ValueError(f"correlation skipped: '{col}' {reason}")
     flt = op.filter
     if flt:
         mask = pd.Series(True, index=df.index)
@@ -484,5 +509,8 @@ def execute_plan(df: pd.DataFrame, plan,
     for candidate in candidates:
         if not isinstance(candidate, KpiCandidate):
             candidate = KpiCandidate(**candidate)
+        if is_blocked_identifier_aggregation(candidate.operation):
+            # Task A.3: skip — never emit a mean/sum/avg on an ID-like name.
+            continue
         results.extend(execute_kpi(df, candidate, registry))
     return results

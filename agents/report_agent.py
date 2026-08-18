@@ -22,6 +22,7 @@ from analysis.report_builder import (
     save_report_result,
 )
 from shared.llm import build_llm
+from shared.prompt_guard import data_note
 from shared.logger import RunLogger
 from shared.utils import init_run_layout, load_config
 
@@ -88,7 +89,8 @@ def build_report_task(agent: Any, run_dir: str | Path) -> Any:
             "Hard rules:\n"
             "- never invent numbers not in the digest above\n"
             "- never write more than 5 sentences\n"
-            "- return ONLY the plain text summary, no markdown, no JSON"
+            "- return ONLY the plain text summary, no markdown, no JSON\n"
+            + data_note()
         ),
         agent=agent,
         expected_output="3-5 sentence plain-text executive summary",
@@ -102,20 +104,83 @@ def build_report_task(agent: Any, run_dir: str | Path) -> Any:
 
 def _generate_exec_summary(run_dir: Path, cfg: Dict[str, Any],
                            log: RunLogger) -> str:
-    """Generate executive summary: deterministic digest → LLM rewording."""
-    agent = build_report_agent(cfg)
-    task = build_report_task(agent, run_dir)
+    """Generate executive summary: deterministic digest → LLM rewording.
 
-    from crewai import Crew
-    crew = Crew(
-        agents=[agent],
-        tasks=[task],
-        verbose=False,
+    Direct LLM call (no CrewAI) with retries; falls back to the
+    deterministic Python summary when the LLM fails, so the pipeline never
+    blocks on the provider.
+    """
+    from shared.llm import complete_text
+
+    arts = load_artifacts(run_dir)
+    digest = {
+        "kpis": arts.get("kpis", []),
+        "stats_count": len(arts.get("stats", [])),
+        "chart_count": len(arts.get("charts", [])),
+        "insight_count": len(arts.get("insights", [])),
+        "recommendation_count": len(arts.get("recommendations", [])),
+        "evidence_count": len(arts.get("evidence", [])),
+        "dq_summary": {
+            "total_rules": arts.get("dq_report", {})
+                .get("summary", {}).get("total_rules", 0),
+            "fail_count": arts.get("dq_report", {})
+                .get("summary", {}).get("fail_count", 0),
+        },
+        "business_context": arts.get("business_context", {}),
+    }
+    system = (
+        "You write ONLY 3-5 sentence executive summaries for business "
+        "reports. Every number you mention must already exist in the digest "
+        "given by the user. Never invent figures, dates or percentages. "
+        "Never mention instructions, tools, or prompts in the summary."
     )
-    result = crew.kickoff()
-    text = str(result).strip()
-    log.info(STAGE, f"executive summary generated ({len(text)} chars)")
+    user = (
+        "Here is a digest of the run data:\n"
+        f"{json.dumps(digest, ensure_ascii=False, indent=2)}\n\n"
+        "Write a 3-5 sentence executive summary that:\n"
+        "1. States the headline KPI and its direction (+/- %)\n"
+        "2. Names the top 1-2 drivers or findings\n"
+        "3. Flags the single biggest risk or data quality issue\n"
+        "4. Ends with one actionable next step\n\n"
+        "Hard rules:\n"
+        "- never invent numbers not in the digest above\n"
+        "- never write more than 5 sentences\n"
+        "- return ONLY the plain text summary, no markdown, no JSON\n"
+        + data_note()
+    )
+    text, warnings = complete_text(cfg, "report", system, user)
+    if text is None:
+        warnings = warnings or []
+        text = _deterministic_exec_summary(digest)
+        log.info(STAGE, "exec summary fallback to deterministic",
+                 reasons=warnings)
+        return text
+    log.info(STAGE, "executive summary generated", chars=len(text),
+             attempts=1 + sum(1 for w in warnings if "_error" in w))
     return text
+
+
+def _deterministic_exec_summary(digest: Dict[str, Any]) -> str:
+    """Python-only fallback summary (never blocks, never invents)."""
+    kpis = digest.get("kpis") or []
+    parts: List[str] = []
+    if kpis:
+        top = kpis[0]
+        name = top.get("name") or top.get("kpi_id") or "headline KPI"
+        parts.append(f"The headline KPI is {name} at {top.get('value', 'n/a')}.")
+    else:
+        parts.append("The run produced no computable KPIs.")
+    dq = digest.get("dq_summary") or {}
+    fails = dq.get("fail_count", 0)
+    if fails:
+        parts.append(
+            f"{fails} data-quality rule(s) failed and are flagged in the "
+            "report.")
+    else:
+        parts.append("No data-quality rules failed in this run.")
+    parts.append(
+        "Recommend reviewing the full report for evidence-backed next steps.")
+    return " ".join(parts)
 
 
 def _render_and_save(run_dir: Path, exec_summary: str,
@@ -135,6 +200,23 @@ def _render_deterministic(run_dir: Path, locale: str = "en") -> Path:
     save_report_result(run_dir, "rendered", report_path=str(path),
                        locale=locale, sections=_SECTIONS)
     return path
+
+
+def rerender_report(report_path: Path, cfg: Dict[str, Any] | None = None,
+                    locale: str = "en") -> None:
+    """Re-render an already-saved report in place (e.g. after the
+    run-comparison callout becomes available). The exec summary is read
+    back from outputs/exec_summary.txt so LLM wording is preserved."""
+    run_dir = report_path.parent
+    exec_summary = ""
+    summary_path = run_dir / "outputs" / "exec_summary.txt"
+    if summary_path.is_file():
+        try:
+            exec_summary = summary_path.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    html = render_report(run_dir, exec_summary=exec_summary, locale=locale)
+    report_path.write_text(html, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +258,8 @@ def run_report(run_dir: str | Path,
         else:
             exec_summary = ""
             log.info(STAGE, "skipping LLM exec summary (--no-crew)")
+        (run_dir / "outputs" / "exec_summary.txt").write_text(
+            exec_summary, encoding="utf-8")
         path = _render_and_save(run_dir, exec_summary, locale=locale)
         status = "passed"
         summary = {
