@@ -323,9 +323,12 @@ def _state_payload(run_id: Optional[str], historical: bool = False
 class Handler(BaseHTTPRequestHandler):
     server_version = "InsightForgeApp/0.1"
 
-    _CSP = ("default-src 'self'; script-src 'unsafe-inline'; "
-            "style-src 'unsafe-inline'; img-src 'self' data:; "
-            "connect-src 'self'")
+    _CSP = ("default-src 'self'; script-src 'unsafe-inline' "
+            "https://cdn.jsdelivr.net; "
+            "style-src 'unsafe-inline' https://cdn.jsdelivr.net "
+            "https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data:; connect-src 'self'")
 
     def _send(self, code: int, body: bytes,
               ctype: str = "application/json") -> None:
@@ -392,6 +395,15 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": "not found"}, 404)
 
     def do_POST(self):  # noqa: N802
+        try:
+            self._do_post()
+        except Exception as exc:  # noqa: BLE001 -- never drop the connection
+            try:
+                self._json({"ok": False, "error": f"server error: {exc}"}, 500)
+            except Exception:  # noqa: BLE001 -- socket already gone
+                pass
+
+    def _do_post(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path in ("/api/start", "/api/demo"):
             if not self._auth_ok():
@@ -657,11 +669,21 @@ function apiHeaders() {
   return key ? {"X-API-Key": key} : {};
 }
 
+function fetchError(e) {
+  // TypeError "Failed to fetch" = the server is unreachable, not a
+  // pipeline/model error — those come back as JSON with a message.
+  return '<div class="error"><b>Server unreachable.</b> Make sure '
+    + 'python app.py is still running in its console, then reload this '
+    + 'page and try again. Details: ' + e + '</div>';
+}
+
 function upload(file, crew) {
   fetch("/api/start?name=" + encodeURIComponent(file.name) +
         "&crew=" + (crew ? "1" : "0"),
         {method: "POST", body: file, headers: apiHeaders()})
-    .then(r => r.json()).then(d => {
+    .then(r => r.json().catch(() => ({ok: false,
+      error: "server returned HTTP " + r.status})))
+    .then(d => {
       if (!d.ok) {
         $("error").innerHTML = '<div class="error">' + d.error + "</div>";
         return;
@@ -672,8 +694,7 @@ function upload(file, crew) {
       renderStages({});
       poll();
       setInterval(() => { if (!document.hidden) poll(); }, 900);
-    }).catch(e => $("error").innerHTML =
-      '<div class="error">' + e + "</div>");
+    }).catch(e => $("error").innerHTML = fetchError(e));
 }
 
 $("run").addEventListener("click", () => {
@@ -683,13 +704,14 @@ $("run").addEventListener("click", () => {
   upload(f, $("crew").checked);
 });
 $("demo").addEventListener("click", () =>
-  fetch("/api/demo", {method: "POST", headers: apiHeaders()}).then(r => r.json()).then(d => {
+  fetch("/api/demo", {method: "POST", headers: apiHeaders()}).then(r => r.json())
+  .then(d => {
     if (!d.ok) { $("error").innerHTML =
       '<div class="error">' + d.error + "</div>"; return; }
     $("error").innerHTML = "";
     window._dur = {}; renderStages({}); poll();
     setInterval(() => { if (!document.hidden) poll(); }, 900);
-  }));
+  }).catch(e => $("error").innerHTML = fetchError(e)));
 
 renderStages({});
 loadHistory();
