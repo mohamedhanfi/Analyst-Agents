@@ -135,7 +135,8 @@ def _generate_insights(run_dir: Path,
                                   kpi.operation.column_b):
             continue
         evidence_ids = [kpi.evidence_id] if kpi.evidence_id else []
-        description = (f"The {kpi.name} is {_fmt(kpi.value)} for this "
+        col_label = _friendly_name(kpi.operation.column or kpi.name)
+        description = (f"The {col_label} is {_fmt(kpi.value)} for this "
                        f"dataset.")
         if _is_ordinal_column(understanding, kpi.operation.column):
             # 2.3: a mean satisfaction of 3.4 is an index of ordered
@@ -155,7 +156,9 @@ def _generate_insights(run_dir: Path,
         ))
 
     # 2) CORRELATIONAL — only with p-value + CI, and only for meaningful
-    # strength; reports strength, never cause.
+    # strength; reports strength, never cause. Deduplicate by variable pair
+    # so Pearson + Spearman of the same pair don't both appear.
+    seen_corr_pairs: set = set()
     for st in stats:
         if (st.category == "correlation" and st.p_value is not None
                 and st.statistic is not None
@@ -172,6 +175,10 @@ def _generate_insights(run_dir: Path,
                     and st.test_name == "pearson":
                 continue
             a, b = _pair_names(st)
+            pair_key = tuple(sorted([a, b]))
+            if pair_key in seen_corr_pairs:
+                continue
+            seen_corr_pairs.add(pair_key)
             strength = "strong" if abs(st.statistic) >= 0.7 else "moderate"
             ci = ""
             if st.ci_low is not None and st.ci_high is not None:
@@ -180,9 +187,10 @@ def _generate_insights(run_dir: Path,
             insights.append(Insight(
                 insight_id=_next_id(),
                 claim_type="CORRELATIONAL",
-                title=f"Correlation between {a} and {b}",
+                title=f"Correlation between {_friendly_name(a)} and {_friendly_name(b)}",
                 description=(f"There is a {strength} association between "
-                             f"{a} and {b} (r = {st.statistic:.2f}, "
+                             f"{_friendly_name(a)} and {_friendly_name(b)} "
+                             f"(r = {st.statistic:.2f}, "
                              f"p = {st.p_value:.3f}{ci}). This describes "
                              f"association, not cause."),
                 confidence="high" if abs(st.statistic) >= 0.7 else "medium",
@@ -206,15 +214,16 @@ def _generate_insights(run_dir: Path,
             if _references_identifier(understanding, *st.variables):
                 continue
             if st.test_name in ("chi2", "cramers_v"):
-                text = (f"{a} and {b} are significantly associated "
-                        f"(p = {st.p_value:.3f}).")
+                text = (f"{_friendly_name(a)} and {_friendly_name(b)} are "
+                        f"significantly associated (p = {st.p_value:.3f}).")
             else:
-                text = (f"{a} differs significantly across groups of {b} "
+                text = (f"{_friendly_name(a)} differs significantly across "
+                        f"groups of {_friendly_name(b)} "
                         f"(p = {st.p_value:.3f}).")
             insights.append(Insight(
                 insight_id=_next_id(),
                 claim_type="COMPARATIVE",
-                title=f"{a} differs across {b}",
+                title=f"{_friendly_name(a)} differs across {_friendly_name(b)}",
                 description=text,
                 confidence="high" if st.p_value < 0.001 else "medium",
                 evidence_ids=[st.evidence_id] if st.evidence_id else [],
@@ -344,6 +353,11 @@ def _pair_names(st: StatisticalResult) -> Tuple[str, str]:
     return a, b
 
 
+def _friendly_name(col: str) -> str:
+    """Convert column name to human-friendly: 'performance_score' -> 'Performance Score'."""
+    return col.replace("_", " ").replace(".", " ").title()
+
+
 def _period_label(st: StatisticalResult) -> str:
     return (st.extra or {}).get("period") or "time"
 
@@ -358,16 +372,26 @@ def _build_recommendations(insights: List[Insight]) -> List[Recommendation]:
         "CORRELATIONAL": ("the association identifies a candidate lever, "
                           "but acting on it as a cause would be premature"),
     }
-    hedges = {
-        "DESCRIPTIVE": "consider testing a controlled improvement to this "
-                       "metric on a small slice before scaling it",
-        "COMPARATIVE": "consider investigating what drives the lagging "
-                       "group and trialing a targeted action on it",
-        "CORRELATIONAL": "consider testing the lever in a controlled "
-                         "experiment before committing budget to it",
-    }
     recommendations: List[Recommendation] = []
     for insight in insights[: _MAX_RECOMMENDATIONS]:
+        # Build a specific, actionable recommendation based on insight type.
+        if insight.claim_type == "DESCRIPTIVE":
+            rec_action = (
+                "Establish monitoring thresholds around this baseline and "
+                "design a controlled pilot to test whether a targeted "
+                "intervention can shift the metric before full rollout.")
+        elif insight.claim_type == "COMPARATIVE":
+            rec_action = (
+                "Investigate root causes behind the group gap — operational "
+                "differences, resource allocation, or policy variations — "
+                "then trial the most promising lever on the lagging segment.")
+        elif insight.claim_type == "CORRELATIONAL":
+            rec_action = (
+                "Treat this association as a hypothesis: run a controlled "
+                "experiment or longitudinal analysis to test causality "
+                "before committing resources to act on it.")
+        else:
+            rec_action = "Review this finding and assess next steps."
         recommendations.append(Recommendation(
             recommendation_id=f"REC-{len(recommendations) + 1:03d}",
             insight_id=insight.insight_id,
@@ -377,7 +401,7 @@ def _build_recommendations(insights: List[Insight]) -> List[Recommendation]:
                 f"Finding — the evidence above ("
                 f"{', '.join(insight.evidence_ids)}) supports this reading.\n"
                 f"Implication — {implications.get(insight.claim_type, '')}.\n"
-                f"Recommendation (hedged) — {hedges.get(insight.claim_type, '')}."
+                f"Recommendation (hedged) — {rec_action}"
             ),
         ))
     return recommendations

@@ -52,9 +52,8 @@ def _write_run_comparison(run_dir: Path, source_name: str,
         prev_payload = json.loads(prev_kpis.read_text(encoding="utf-8"))
         curr_payload = json.loads(curr_kpis.read_text(encoding="utf-8"))
         # Audit L: only compare runs with a matching artifact schema version.
-        if (prev_payload.get("schema_version")
-                != curr_payload.get("schema_version")
-                != SCHEMA_VERSION):
+        if (prev_payload.get("schema_version") != SCHEMA_VERSION
+                or curr_payload.get("schema_version") != SCHEMA_VERSION):
             log.warning("pipeline", "run comparison skipped: schema_version "
                         "mismatch", previous_run_id=previous_id)
             return

@@ -306,7 +306,9 @@ def run_understanding(run_dir: str | Path,
         summary.setdefault("run_id", run_id)
         status = summary.get("status", "failed")
     except Exception as exc:  # noqa: BLE001 -- a failed stage must not crash the run
+        import traceback as _tb
         log.error(STAGE, f"understanding failed: {exc}")
+        _tb.print_exc()
         status = "failed"
         summary = {"run_id": run_id, "stage": STAGE, "status": status,
                    "error": str(exc)}

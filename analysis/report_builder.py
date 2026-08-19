@@ -652,9 +652,6 @@ def render_run_comparison(cmp: Dict[str, Any]) -> str:
     if not rows:
         return ""
     body = "\n".join(rows)
-    prev_link = (
-        f'<a href="run_comparison.html" class="text-info">' if False else ""
-    )
     return (
         '<div class="card mb-4 shadow-sm">'
         '<div class="card-header fw-semibold">'

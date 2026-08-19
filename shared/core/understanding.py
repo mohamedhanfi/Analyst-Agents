@@ -73,61 +73,7 @@ class ColumnFacts:
         }
 
 
-@dataclass
-class IdentifierSignal:
-    """Result of detect_identifier_like: confidence 0-1 + human-readable
-    signals explaining the score (audited into dataset_understanding.json)."""
-    score: float
-    signals: List[str]
 
-
-def detect_identifier_like(column_name: str,
-                           series: Union["pd.Series", None] = None
-                           ) -> IdentifierSignal:
-    """Semantic pre-check (task A.1): is a numeric column really a measure,
-    or an ID-like value that must never be aggregated?
-
-    Runs BEFORE any numeric column defaults to measure. Combines a name
-    pattern match with value-shape signals (digit-length consistency,
-    integral values, unique ratio, leading zeros). Returns a confidence
-    score; callers force role=identifier above the configured threshold
-    and may consult the LLM in the ambiguous band (0.3–threshold).
-    """
-    import pandas as pd  # local: keeps this module import-light
-
-    signals: List[str] = []
-    name = (column_name or "").strip().lower()
-    score = 0.0
-    if name and IDENTIFIER_NAME_RE.search(name):
-        signals.append("name matches identifier pattern")
-        score += 0.75
-
-    if series is not None:
-        vals = pd.Series(series).dropna()
-        if len(vals) == 0:
-            return IdentifierSignal(min(score, 1.0), signals)
-        numeric = pd.to_numeric(vals, errors="coerce").dropna()
-        if len(numeric) > 0:
-            if float((numeric % 1 == 0).mean()) >= 0.99:
-                signals.append("all values integral (no meaningful sum)")
-                score += 0.2
-            try:
-                lengths = numeric.abs().apply(lambda v: len(str(int(v))))
-            except (ValueError, OverflowError):  # pragma: no cover
-                lengths = None
-            if lengths is not None and len(lengths) > 0:
-                med = float(lengths.median())
-                if float((abs(lengths - med) <= 1).mean()) >= 0.9:
-                    signals.append("digit length nearly constant")
-                    score += 0.2
-            if float(numeric.nunique()) / len(numeric) > 0.9:
-                signals.append("high cardinality (unique ratio > 0.9)")
-                score += 0.15
-        str_vals = vals.astype(str).str.strip()
-        if str_vals.str.match(r"^0[0-9]+$").any():
-            signals.append("leading zeros in original values")
-            score += 0.4
-    return IdentifierSignal(min(score, 1.0), signals)
 
 
 def _is_numeric(dtype: str) -> bool:
@@ -224,12 +170,17 @@ class ColumnProfiler:
             if (_is_numeric(dtype) and role == "measure" and code_like):
                 role = "categorical"
                 alternates = ["measure"]
-            # A.1: a numeric column with a confident identifier signal is
-            # never defaulted to measure — skip the dtype default entirely.
-            elif (_is_numeric(dtype) and role == "measure"
+            # A.1: a column with a confident identifier signal is
+            # never defaulted to free_text/measure — override to identifier.
+            if (_is_numeric(dtype) and role == "measure"
                     and signal.score >= identifier_threshold):
                 role = "identifier"
                 alternates = ["measure"]
+            elif (not _is_numeric(dtype) and not _is_temporal(dtype)
+                    and role in ("free_text", "dimension")
+                    and signal.score >= identifier_threshold):
+                role = "identifier"
+                alternates = ["dimension", "free_text"]
             facts.append(ColumnFacts(
                 name=name, dtype=dtype, nunique=nunique,
                 nullable=nullable, suggested_role=role,
@@ -330,6 +281,9 @@ def build_analysis_plan(raw_plan: Union[AnalysisPlan, dict, str, None]
         errors.append("'statistical_tests' must be a list")
         tests = []
     for test in tests:
+        if not isinstance(test, str):
+            errors.append(f"statistical test must be a string, got {type(test).__name__}")
+            continue
         if test in ALLOWED_STATISTICAL_TESTS:
             allowed_tests.append(test)
         else:
@@ -464,20 +418,37 @@ def default_plan(profile: DataProfile,
             name=f"{identifiers[0]} count",
             operation=DslOperation(function="count", column=identifiers[0])))
     if measures and temporals:
-        kpis.append(KpiCandidate(
-            kpi_id=f"KPI-{len(kpis) + 1:03d}",
-            name=f"{measures[0]} YoY growth",
-            operation=DslOperation(function="growth", column=measures[0],
-                                   over_column=temporals[0],
-                                   period="YoY")))
+        # Only compute growth when the temporal column is a time-bucket
+        # (fewer unique values than rows, e.g. month, quarter) — skip for
+        # point-in-time columns like hire_date where growth is meaningless.
+        for tcol in temporals:
+            tunique = profile.nunique.get(tcol, 0)
+            if tunique < profile.row_count * 0.8:
+                kpis.append(KpiCandidate(
+                    kpi_id=f"KPI-{len(kpis) + 1:03d}",
+                    name=f"{measures[0]} YoY growth",
+                    operation=DslOperation(function="growth",
+                                           column=measures[0],
+                                           over_column=tcol,
+                                           period="YoY")))
+                break
     if len(measures) >= 2:
-        kpis.append(KpiCandidate(
-            kpi_id=f"KPI-{len(kpis) + 1:03d}",
-            name=f"Correlation {measures[0]} x {measures[1]}",
-            operation=DslOperation(function="correlation",
-                                   column_a=measures[0],
-                                   column_b=measures[1],
-                                   method="pearson")))
+        # Limit to top-3 correlation pairs to avoid redundant evidence.
+        pairs_added = 0
+        for i in range(len(measures)):
+            if pairs_added >= 3:
+                break
+            for j in range(i + 1, len(measures)):
+                if pairs_added >= 3:
+                    break
+                kpis.append(KpiCandidate(
+                    kpi_id=f"KPI-{len(kpis) + 1:03d}",
+                    name=f"Correlation {measures[i]} x {measures[j]}",
+                    operation=DslOperation(function="correlation",
+                                           column_a=measures[i],
+                                           column_b=measures[j],
+                                           method="pearson")))
+                pairs_added += 1
 
     tests = ["descriptive"]
     if len(measures) >= 2:

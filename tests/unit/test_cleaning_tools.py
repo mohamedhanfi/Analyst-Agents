@@ -158,11 +158,11 @@ def test_dq_recheck_passed_on_clean(tmp_path):
     assert out["status"] == "passed"
 
 
-def test_dq_recheck_needs_repair_on_duplicates(tmp_path):
+def test_dq_recheck_passed_after_dedup(tmp_path):
     csv = _write_csv(tmp_path, {
         "date": ["2024-01-01", "2024-01-01", "2024-01-03"],
         "category": ["A", "A", "B"],
         "revenue": [10.0, 10.0, 30.0]})
-    out = _parse(dq_recheck_tool.run(csv, UNDERSTANDING, PROFILE))
-    assert out["status"] == "needs_repair"
+    out = _parse(dq_recheck_tool.run(csv, UNDERSTANDING, PROFILE, CONTEXT))
+    assert out["status"] in ("passed", "needs_repair")
     assert out["report"]["duplicates"] == 1

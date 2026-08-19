@@ -1,9 +1,9 @@
-﻿# Insight Forge â€” single source of configuration
-# Canonical reference: Project_Plan/Analyst-Agents.md (Â§1 hard limits, Â§5 retention)
+﻿# Insight Forge — single source of configuration
+# Canonical reference: Project_Plan/Analyst-Agents.md (§1 hard limits, §5 retention)
 
 pipeline_version: "4.3.0"
 
-# Â§2.6: human review gate for insights (approve / edit / regenerate).
+# §2.6: human review gate for insights (approve / edit / regenerate).
 # false in automated runs; set true for an interactive checkpoint.
 review_required: false
 
@@ -11,12 +11,13 @@ llm:
   provider: openrouter
   base_url: "https://openrouter.ai/api/v1"
   api_key_env: OPENROUTER_API_KEY
-  model: deepseek/deepseek-v4-flash
-  temperature: 0.0        # reproducible LLM stages (Â§5: temperature 0 + seed)
+  model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+  temperature: 0.0        # reproducible LLM stages (§5: temperature 0 + seed)
   seed: 42
-  max_retries: 3          # LLM retries per agent task (Â§1)
+  max_retries: 3          # LLM retries per agent task (§1)
   timeout_seconds: 120
-  max_cost_usd: 5.00      # hard stop + fallback reason `cost_limit_exceeded` (Â§1)
+  max_tokens: 4096        # cap per-call output tokens (CrewAI default is 65536)
+  max_cost_usd: 5.00      # hard stop + fallback reason `cost_limit_exceeded` (§1)
 
 # Per-agent overrides: every field optional, inherits from llm.* above.
 # All agents share one model (deepseek/deepseek-v4-flash) - no overrides.
@@ -27,12 +28,12 @@ agents:
     backstory: "A meticulous ingestion specialist. Never trusts the file; never forwards raw cell content. Follows the deep-validation rules exactly."
   understanding:
     role: "Data Understanding Specialist"
-    goal: "Classify column roles, detect domain and entities, and build a whitlist-only DSL analysis plan."
+    goal: "Classify column roles, detect domain and entities, and build a whitelist-only DSL analysis plan."
     backstory: "Understands datasets through profiles and samples, not raw data. Planning is a second task of the same agent."
   cleaning:
     role: "Data Cleaning Strategist"
-    goal: "Decide the missing-value/flag/drop strategy per column role Ã— missingness type, then hand it to Python for execution."
-    backstory: "Never invents data. Preserves missingness as features when it is a signal. Strategy only â€” Python executes."
+    goal: "Decide the missing-value/flag/drop strategy per column role × missingness type, then hand it to Python for execution."
+    backstory: "Never invents data. Preserves missingness as features when it is a signal. Strategy only — Python executes."
   analyst:
     role: "Senior Data Analyst"
     goal: "Compute KPIs and statistical tests on the full dataset using the DSL whitelist, and chart the results."
@@ -50,18 +51,18 @@ agents:
     goal: "Recompute 100% of KPIs, validate structure, and decide the final verdict deterministically."
     backstory: "Independent guard: Python recomputation is authoritative. Uses a different model than generation."
 
-# Hard limits (Â§1) â€” deterministic, prevent unbounded loops / resource blowups
+# Hard limits (§1) — deterministic, prevent unbounded loops / resource blowups
 limits:
   llm_retries_per_task: 3
   cleaning_max_rechecks: 3        # after: auto-verdict NEEDS_REVISION, reason cleaning_retry_limit_exceeded
-  human_input_timeout_min: 5      # after: Generic Analysis Mode (Â§3.5)
+  human_input_timeout_min: 5      # after: Generic Analysis Mode (§3.5)
   max_file_size_mb: 200           # reject above
-  min_rows: 5                     # stop on < 5 rows (Â§2.1)
-  max_rows: 5000000               # above â†’ chunked processing (not rejection)
+  min_rows: 5                     # stop on < 5 rows (§2.1)
+  max_rows: 5000000               # above → chunked processing (not rejection)
   max_columns: 10000
   max_chart_count: 20             # excess dropped, charts_truncated: true
   stage_timeout_seconds: 600      # default per-stage timeout
-  max_run_seconds: 1800           # hard stop â†’ reason run_time_limit_exceeded
+  max_run_seconds: 1800           # hard stop → reason run_time_limit_exceeded
   chunk_size: 50000               # pandas read_csv chunksize for >5M rows
 
 # §2.2/semantic-intelligence (task A): numeric ID-like columns (phone
@@ -83,7 +84,7 @@ charts:
 reader:
   merge_sheets: false
 
-# Data retention & privacy (Â§5) â€” days per category; enforced by janitor job
+# Data retention & privacy (§5) — days per category; enforced by janitor job
 retention:
   raw_days: 7
   run_days: 30

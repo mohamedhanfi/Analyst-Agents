@@ -8,6 +8,7 @@ Answers are free text — cell content is never involved here.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -67,6 +68,8 @@ class BusinessContextGatherer:
 
     def gather(self, file_name: str,
                sheet_names: List[str] | None = None) -> BusinessContext:
+        if os.environ.get("INSIGHT_FORGE_NO_INPUT") == "1":
+            return self._generic(file_name)
         deadline = time.monotonic() + self.timeout_seconds
 
         sheet_used: str | None = None

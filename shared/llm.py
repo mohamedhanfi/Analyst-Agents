@@ -48,6 +48,9 @@ def build_llm(cfg: Dict[str, Any], agent_name: str) -> LLM:
     max_retries = llm_cfg.get("max_retries")
     if max_retries:
         kwargs["max_retries"] = int(max_retries)
+    max_tokens = llm_cfg.get("max_tokens")
+    if max_tokens:
+        kwargs["max_tokens"] = int(max_tokens)
     return LLM(**kwargs)
 
 
@@ -67,6 +70,9 @@ def _llm_kwargs(cfg: Dict[str, Any], agent_name: str) -> Dict[str, Any]:
     max_retries = llm_cfg.get("max_retries")
     if max_retries:
         kwargs["num_retries"] = int(max_retries)
+    max_tokens = llm_cfg.get("max_tokens")
+    if max_tokens:
+        kwargs["max_tokens"] = int(max_tokens)
     return kwargs
 
 
@@ -196,10 +202,11 @@ def test_connection(
     kwargs = _llm_kwargs(cfg, agent_name)
     kwargs["num_retries"] = 0
     kwargs["timeout"] = float(timeout)
+    kwargs["max_tokens"] = 128  # ping only — override config for cheap pre-flight
     try:
         resp = litellm.completion(
             messages=[{"role": "user", "content": "ping"}],
-            max_tokens=128, **kwargs)
+            **kwargs)
         # Connectivity is what matters — a reasoning model may spend the
         # whole budget on reasoning_content and return empty content.
         if resp.choices:

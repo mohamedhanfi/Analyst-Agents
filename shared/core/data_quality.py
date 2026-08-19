@@ -136,6 +136,20 @@ def check_invalid_values(understanding: DatasetUnderstanding, df: pd.DataFrame,
                 if (numeric < 0).any() or (numeric > age_max).any():
                     issues.append(DqIssue(SEV_HIGH, CAT_INVALID, name,
                                           "out_of_range"))
+            # 3.1: IQR outlier detection — flag measures with extreme values
+            # so the cleaning stage can decide to flag or drop them.
+            valid = numeric.dropna()
+            if len(valid) >= 10:
+                q1 = float(valid.quantile(0.25))
+                q3 = float(valid.quantile(0.75))
+                iqr = q3 - q1
+                if iqr > 0:
+                    lo = q1 - 1.5 * iqr
+                    hi = q3 + 1.5 * iqr
+                    n_outliers = int(((valid < lo) | (valid > hi)).sum())
+                    if n_outliers > 0:
+                        issues.append(DqIssue(SEV_MEDIUM, CAT_INVALID, name,
+                                              f"outliers_iqr_x{n_outliers}"))
         elif col.role == "temporal":
             parsed = pd.to_datetime(series, errors="coerce")
             non_null = series.notna()
@@ -156,6 +170,17 @@ def check_invalid_values(understanding: DatasetUnderstanding, df: pd.DataFrame,
             if is_mixed_unit(series):
                 issues.append(DqIssue(SEV_MEDIUM, CAT_INVALID, name,
                                       "mixed_units"))
+            # 4.4: SQL injection / suspicious content in dimension columns.
+            # Flag strings containing SQL keywords or special characters
+            # that suggest injection attempts.
+            str_vals = series.dropna().astype(str).str.strip()
+            sql_pattern = re.compile(
+                r"(?:;|'|\b(?:DROP|DELETE|INSERT|UPDATE|SELECT|UNION|"
+                r"ALTER|CREATE|EXEC|EXECUTE)\b)",
+                re.IGNORECASE)
+            if str_vals.str.contains(sql_pattern, regex=True).any():
+                issues.append(DqIssue(SEV_HIGH, CAT_INVALID, name,
+                                      "sql_injection_suspected"))
     return issues
 
 
@@ -499,8 +524,7 @@ def assemble_report(understanding: DatasetUnderstanding,
             invalid.setdefault(issue.column, []).append(issue.detail)
 
     has_high = any(issue.severity == SEV_HIGH for issue in issues)
-    status = "needs_repair" if (has_high or repair_log["repair_applied"]) \
-        else "passed"
+    status = "needs_repair" if has_high else "passed"
     report = DataQualityReport(
         status=status,
         invalid=invalid,

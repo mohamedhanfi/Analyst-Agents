@@ -10,12 +10,6 @@ from shared.llm import DEFAULT_MODEL, build_llm
 from shared.utils import load_config
 
 
-def _cfg(**llm_overrides):
-    llm = {"api_key": "dummy"}
-    llm.update(llm_overrides)
-    return {"llm": llm}
-
-
 def test_default_model_fallback():
     llm = build_llm(_cfg(), "ghost_agent")
     assert llm.model == DEFAULT_MODEL.split("/", 1)[1]

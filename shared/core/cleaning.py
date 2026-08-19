@@ -36,6 +36,7 @@ CLEANING_ACTIONS = frozenset({
     "drop_row",          # temporal/identifier missing — drop affected rows
     "drop_column",       # >70% — drop the column entirely
     "drop_negative",     # flagged negative measure (§2.3: cleaning decides)
+    "sanitize_text",     # SQL injection suspected — strip suspicious chars
 })
 
 MISSING_MAR_RATE = 0.70
@@ -109,6 +110,11 @@ def build_strategy(understanding: DatasetUnderstanding,
                 and not NEGATIVE_ALLOWED_RE.search(col.name)):
             decision = {"action": "drop_negative",
                         "detail": "negative_measure_flagged"}
+        # 4.4: sql_injection_suspected — sanitize by stripping suspicious
+        # SQL keywords and special characters from dimension columns.
+        elif any("sql_injection" in str(item) for item in flags):
+            decision = {"action": "sanitize_text",
+                        "detail": "sql_injection_suspected"}
         else:
             decision = _column_strategy(col.role, rate, assessment)
         columns.append({
@@ -117,10 +123,19 @@ def build_strategy(understanding: DatasetUnderstanding,
             "action": decision["action"],
             "detail": decision["detail"],
         })
+    # Auto-populate outlier handling from DQ issues so cleaning stages
+    # handle them and the recheck doesn't re-flag them.
+    outlier_columns: Dict[str, str] = {}
+    for issue in (dq_report.issues or []):
+        if (issue.get("category") == "invalid_value"
+                and str(issue.get("detail", "")).startswith("outliers_iqr")):
+            col = issue.get("column", "")
+            if col:
+                outlier_columns[col] = "flag"
     return {
         "columns": columns,
         "deduplicate": int(getattr(dq_report, "duplicates", 0) or 0) > 0,
-        "outliers": {},
+        "outliers": outlier_columns,
     }
 
 
@@ -189,6 +204,37 @@ def normalize_strategy(raw: Any,
             errors.append(f"outlier column '{name}' is not a measure")
             continue
         cleaned_outliers[name] = mode
+
+    # Merge deterministic overrides for high-severity DQ issues that the
+    # LLM may not know about (e.g. sanitize_text for SQL injection).
+    if dq_report is not None:
+        invalid = dq_report.invalid or {}
+        col_names = {c["column"]: c for c in columns}
+        for col_name, flags in invalid.items():
+            if any("sql_injection" in str(f) for f in flags):
+                if col_name in col_names:
+                    col_names[col_name]["action"] = "sanitize_text"
+                else:
+                    meta = known_columns.get(col_name)
+                    columns.append({
+                        "column": col_name,
+                        "role": meta.role if meta else "dimension",
+                        "action": "sanitize_text",
+                        "detail": "sql_injection_suspected",
+                    })
+            if any("negative" in str(f) for f in flags):
+                meta = known_columns.get(col_name)
+                if meta and meta.role == "measure" \
+                        and not NEGATIVE_ALLOWED_RE.search(col_name):
+                    if col_name in col_names:
+                        col_names[col_name]["action"] = "drop_negative"
+                    else:
+                        columns.append({
+                            "column": col_name,
+                            "role": "measure",
+                            "action": "drop_negative",
+                            "detail": "negative_measure_flagged",
+                        })
 
     return {
         "columns": columns,
@@ -341,6 +387,17 @@ def execute_strategy(df: pd.DataFrame, strategy: Dict[str, Any],
             df = df[~mask]
             log.append({"op": "drop_negative", "column": name,
                         "rows_affected": rows})
+        elif action == "sanitize_text":
+            import re as _re
+            sql_pattern = _re.compile(
+                r"(?:;|'|\b(?:DROP|DELETE|INSERT|UPDATE|SELECT|UNION|"
+                r"ALTER|CREATE|EXEC|EXECUTE)\b)", _re.IGNORECASE)
+            original = df[name].astype(str)
+            sanitized = original.str.replace(sql_pattern, '', regex=True)
+            n_changed = int((original != sanitized).sum())
+            df[name] = sanitized
+            log.append({"op": "sanitize_text", "column": name,
+                        "rows_affected": n_changed})
         elif action == "drop_column":
             df = df.drop(columns=[name])
             log.append({"op": "drop_column", "column": name})

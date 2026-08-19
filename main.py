@@ -2,15 +2,15 @@
 
 Usage::
 
-    python main.py <file.csv> [--crew] [--locale en]
+    python main.py <file.csv> [--crew] [--locale en] [--no-input]
 
 Runs the full 8-stage pipeline end-to-end and prints a JSON summary.
 """
-
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -36,12 +36,21 @@ def main() -> int:
         default="en",
         help="Report locale, e.g. 'en' or 'ar' (default: en).",
     )
+    parser.add_argument(
+        "--no-input",
+        action="store_true",
+        default=False,
+        help="Skip all interactive prompts; go straight to Generic Analysis Mode.",
+    )
     args = parser.parse_args()
 
     file_path = Path(args.file)
     if not file_path.is_file():
         print(json.dumps({"error": f"File not found: {file_path}"}), file=sys.stderr)
         return 1
+
+    if args.no_input:
+        os.environ["INSIGHT_FORGE_NO_INPUT"] = "1"
 
     from crew.crew import run_pipeline
 

@@ -312,7 +312,8 @@ def _recheck_data_quality(df: pd.DataFrame,
         df, {"columns": [], "deduplicate": False, "outliers": {}},
         understanding)
     report, _ = assemble_report(understanding=understanding, profile=profile,
-                                df=typed, context=context, limits=limits)
+                                df=typed, context=context, limits=limits,
+                                skip_repair=True)
     return report.status, report
 
 

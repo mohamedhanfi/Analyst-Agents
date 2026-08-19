@@ -94,7 +94,6 @@ class BusinessContext(BaseModel):
     answered_by: str = ""                         # identity of the human (§8)
     answer_log: List[Dict[str, Any]] = Field(default_factory=list)
     #   [{"question": str, "answer": str, "ts": float}]
-    schema_version: str = SCHEMA_VERSION
 
 
 # ---------------------------------------------------------------------------

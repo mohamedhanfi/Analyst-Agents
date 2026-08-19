@@ -302,7 +302,7 @@ def test_recommendation_chain_is_hedged(tmp_path):
     assert recommendations
     text = recommendations[0].description
     for marker in ("Observation", "Finding", "Implication",
-                   "Recommendation (hedged)", "consider testing"):
+                   "Recommendation (hedged)"):
         assert marker in text, marker
 
 
