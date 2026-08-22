@@ -136,7 +136,9 @@ def test_analysis_logs_stage_lifecycle(tmp_path, cfg):
 
 def test_analysis_missing_cleaned_csv_fails(tmp_path, cfg):
     run_dir = _build_stage4(tmp_path, cfg, pd.DataFrame(_sales_rows()))
-    (run_dir / "data" / "processed" / "cleaned_data.csv").unlink()
+    for name in run_dir.glob("data/processed/cleaned_data*.csv"):
+        name.unlink()
+    (run_dir / "data" / "processed" / "analysis_ready.csv").unlink()
     s = run_analysis(run_dir, cfg=cfg)
     assert s["status"] == "failed"
     assert "cleaned_data.csv" in s.get("error", "")

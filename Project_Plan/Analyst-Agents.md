@@ -1,6 +1,6 @@
 # Insight Forge — Implementation Guide
 
-**Version:** 4.4.0 · **For:** Development Team · **Status:** Production-oriented (not production-ready — §7)
+**Version:** 4.8.0 · **For:** Development Team · **Status:** Production-oriented (not production-ready — §7)
 
 ---
 
@@ -345,10 +345,12 @@ The chart type is **decided by the shape of the data**, not by habit. Python ins
 | 7 | 2 numeric measures, asked together | scatter + trend line when r significant |
 | 8 | ≥ 3 numeric measures | ranked correlation heatmap |
 | 9 | share / "% of whole", parts ≈ 100% | doughnut (only then) |
+| 10 | ranked sum/count contribution, 3–15 values | pareto (sorted bars + cumulative % + 80/20 line) |
+| 11 | growth KPI over time (≥ 3 periods) | line + waterfall of period contributions (variance view) |
 
-**Chart-kind whitelist (12).** Python renders only these kinds; anything else a model proposes is rejected. `bar · barh · line · doughnut · histogram · scatter · heatmap · area · boxplot · stacked_bar · pie · lollipop` (the last five extend the rule table — they exist only via LLM proposal or explicit plan intent, never by accident).
+**Chart-kind whitelist (14).** Python renders only these kinds; anything else a model proposes is rejected. `bar · barh · line · doughnut · histogram · scatter · heatmap · area · boxplot · stacked_bar · pie · lollipop · pareto · waterfall` (the last seven extend the rule table — they exist only via LLM proposal or explicit plan intent, never by accident).
 
-**Hybrid proposal flow.** The LLM may submit `proposed_kinds: [{"kpi_id": "KPI-002", "kind": "boxplot", "reason": "…"}]` to `chart_planner_tool`. Python runs `validate_proposed_kinds`: (1) `kind` must be in the 12-kind whitelist; (2) the shape must fit the data — `line`/`area` need an ordered temporal axis with ≥ 3 points · `scatter` needs 2 numeric measures · `heatmap` ≥ 3 measures · `doughnut`/`pie` only for a share/"% of whole" KPI or a ≤ 2-value dimension · `histogram`/`boxplot` need a numeric measure · `stacked_bar` needs one dimension + ≥ 2 measures · `lollipop` needs a single dimension · unknown `kpi_id` rejected. Accepted proposals override the rule-table kind; rejected ones are **dropped with their reason and fall back to the rule table** — a bad proposal can never produce an unrenderable chart.
+**Hybrid proposal flow.** The LLM may submit `proposed_kinds: [{"kpi_id": "KPI-002", "kind": "boxplot", "reason": "…"}]` to `chart_planner_tool`. Python runs `validate_proposed_kinds`: (1) `kind` must be in the 14-kind whitelist; (2) the shape must fit the data — `line`/`area` need an ordered temporal axis with ≥ 3 points · `scatter` needs 2 numeric measures · `heatmap` ≥ 3 measures · `doughnut`/`pie` only for a share/"% of whole" KPI or a ≤ 2-value dimension · `histogram`/`boxplot` need a numeric measure · `stacked_bar` needs one dimension + ≥ 2 measures · `lollipop` needs a single dimension · unknown `kpi_id` rejected. Accepted proposals override the rule-table kind; rejected ones are **dropped with their reason and fall back to the rule table** — a bad proposal can never produce an unrenderable chart.
 
 Wiring is: **`chart_planner`** takes the KPI list + `data_profile` + numeric/ordinal columns → returns one JSON per chart:
 ```json
@@ -377,9 +379,9 @@ Falling back if the data is too thin: planner downgrades to a simple bar or a ta
 **Tools used:** `dsl_executor_tool` (whitelist only, via `shared/dsl_validator.py`) · `statistical_suite_tool` (scipy) · `chart_planner_tool` (`analysis/chart_planner.py` — deterministic rule table + `validate_proposed_kinds` for LLM proposals) · `chart_renderer_tool` (`analysis/chart_renderer.py` — hand-rolled SVG, deterministic, no plotting library) · `evidence_registry_tool` (`analysis/evidence.py` — the only writer)
 
 **Chart accessibility:**
-- **Color-blind safe palettes** — Okabe-Ito / seaborn colorblind; never red-green as the only encoding.
+- **Navy/gold palette with redundancy** — Insight Forge theme (`#0b3b8c`/`#c9a227` + soft-blue support); never color-only encoding.
 - **Pattern + label redundancies** — bar/pie/doughnut also label values; line/area charts get markers, not color-only.
-- **Alt text** — each `<img>` in the HTML report carries a caption generated from chart metadata + associated insights (title + `reliability` + `evidence_id`).
+- **Alt text** — each `<img>`/`<canvas>` in the HTML report carries a caption generated from chart metadata + associated insights (title + `reliability` + `evidence_id`).
 
 **Localization:**
 - All numeric/datetime formatting follows the report's `locale` (from business context; default `en`): decimal separators and date formats (`en-US` → `1,234.5`, `ar-EG` → `١٬٢٣٤٫٥`).
@@ -450,6 +452,8 @@ Falling back if the data is too thin: planner downgrades to a simple bar or a ta
 | Summary, Business Context, DQ Summary, Data Overview, KPIs, Stats, Charts, Insights, Recommendations, Limitations, Evidence Appendix | LLM summary + all JSONs |
 
 **Security (in render):** Jinja `autoescape=True`, HTML sanitizer, CSP header. Never render cells raw.
+
+**Report design (v4.8):** `resources/report_template.html` is a Jinja2 template with a product-grade design — masthead (title/subtitle/prepared-for/date), sticky navbar with **language toggle (EN/AR with full RTL)** and **theme toggle (light/dark)**, a numbered table of contents, KPI cards with count-up on view, and **interactive Chart.js canvases** (navy/gold palette matching the report theme) with a static SVG fallback when the library or data is unavailable. Every `.table` can be exported to CSV in one click (`downloadCSV`), charts carry a caption (title + reliability + evidence_id) for alt text, and a signature/footer block closes the report. The embedded `_JS_INIT` is idempotent — switching language or theme re-renders the charts without breaking the page (`window.__REPORT_CHART_INSTANCES__` + `window.__rebuildReportCharts`).
 
 **Input:** all `runs/<run_id>/outputs/`, `runs/<run_id>/metadata/`, `runs/<run_id>/knowledge/` files · `resources/report_template.html`
 **Output:** `runs/<run_id>/report.html`, `runs/<run_id>/metadata/report_result.json`
@@ -558,6 +562,19 @@ If business questions time out → Generic Mode with `context_confidence: 0`, re
 > 17. Hedged recommendation chain per insight: Observation → Finding → Implication → "consider testing…" (bounded at 8). Every claim is validated before saving by `claim_validator_tool` (evidence refs exist · claim type matches evidence kinds derived from stage-5 artifacts · recommendations reference surviving insights) — failures are removed and logged.
 > 18. `--crew` refines titles/descriptions only (ids/evidence stay byte-identical, re-validated, deterministic fallback on failure); `--review` enables the §2.6 human gate (approve / edit / regenerate), auto-approved in automated mode (`config.yaml review_required: false`).
 > 19. Flow Review stage 6 is live: card lights up after analysis, `outputs/insights.json` previews in Artifacts with data-flow counts. Verified on `sales_demo.csv`: weak revenue×quantity correlation (r = −0.014) correctly gated out; significant product×category association kept.
+>
+> **v4.7 — data contracts, deep profiling, lineage & large-data I/O (2026-08-19):**
+> 20. `shared/core/contracts.py` — Stage 3b: per-column **contracts** (expected type, nullability, allowed range, forbidden sentinel values, uniqueness, unit/currency hint) + a **normalization layer** that re-expresses values canonically — currency/percent strings ("$1,200", "EGP 500", "12%") parsed to numbers, whitespace/case/Unicode normalized for categories, dates parsed, and pure scale-factor unit conversion (kg↔g↔lbs↔oz · km↔m↔cm↔mm · l↔ml). Never invents data; every change is logged so Cleaning's lineage records it.
+> 21. `shared/core/deep_profile.py` — **deep missingness** (genuine blanks vs "N/A"/"unknown"/"-"/"?" sentinels, zero-as-missing for measures, breakdown by dimension segment and over time, correlated missing-flag columns, imputability per role), **MAD-modified z-score outliers** (Iglewicz & Hoaglin, threshold 3.5) plus context-aware within-segment outliers, and **impact analysis** (before/after deltas per measure) → `metadata/deep_profile.json`.
+> 22. `shared/core/lineage.py` — incremental `metadata/lineage.json`: **raw → validated → repaired → cleaned → analysis_ready** with per-artifact sha256, rows before/after and operation logs — every number in the report can be traced back to the source file. Stage 3 writes raw/validated/repaired (+ official `validated_data.csv`), Stage 4 appends cleaned/analysis_ready (+ `analysis_ready.csv`, the frozen frame Analysis reads).
+> 23. `shared/core/io_utils.py` — large-data I/O: transparent CSV read with a one-time **Parquet cache** above 200 MB (when an engine is installed), **chunked column stats** (missing/nunique/min/max/sum, 100k rows/chunk) so a 10M-row file is never loaded whole, and fast newline-based row estimation.
+> 24. Cleaning runs the **normalization layer before the strategy** (its ops join the cleaning lineage); amount-like strings that DQ failed to cast are parsed via `parse_amount` first so currency/percent values keep their real value. Analysis reads `analysis_ready.csv` via `read_dataframe` (Parquet cache on large files) and reports `read_mode`/`data_rows` in its result.
+>
+> **v4.8 — chart quality gate, pareto/waterfall kinds, report redesign (2026-08-20):**
+> 25. `analysis/chart_quality.py` — per-chart **quality gate** before a chart is trusted in the report: SVG integrity (well-formed root, no "render error"/"no data" fallbacks while data existed), **aggregation match** (rendered group totals equal the KPI value within 0.1% tolerance), and a **DQ-based confidence label** (missingness, repair, contract violations, outlier flags) → `metadata/chart_quality.json` + `quality`/`quality_reason` stamps on each ChartMetadata. Deterministic, never raises.
+> 26. Chart kinds extended to **14** — `pareto` (rule 10: ranked sum/count contribution over a dimension with 3–15 values → sorted bars + cumulative % line + 80/20 reference) and `waterfall` (rule 11: period contributions of a growth KPI → variance view where the final bar tops at the grand total) — each with a deterministic SVG renderer in `analysis/chart_renderer.py`.
+> 27. SVG renderer + interactive Chart.js configs now use the **Insight Forge navy/gold palette** (`#0b3b8c`/`#c9a227` + soft-blue support series), matching the report theme; values are still labelled on bars/points — never color-only.
+> 28. `resources/report_template.html` **redesigned** to match the product design: masthead (title/subtitle/prepared-for/date), sticky navbar with **language toggle (EN/AR with RTL)** + **theme toggle (light/dark)**, TOC, numbered sections, KPI count-up on view, **interactive Chart.js canvases with a static SVG fallback** and per-chart drill-down, `downloadCSV` export of every table, signature + footer, back-to-top. `_JS_INIT` is idempotent (`__REPORT_CHART_INSTANCES__` + `window.__rebuildReportCharts`) so language/theme switches re-render the charts without destroying the page.
 
 ```
 insight-forge/
@@ -578,11 +595,25 @@ insight-forge/
 │   ├── report_agent.py         # stage 7
 │   └── qa_agent.py             # stage 8
 ├── analysis/                   # pure computation, no LLM
-│   ├── chart_planner.py        # §2.5 data-shape rule table → chart kind + reason (deterministic)
+│   ├── chart_planner.py        # §2.5 data-shape rule table (11 rules) → chart kind + reason (deterministic)
+│   ├── chart_quality.py        # §2.5b per-chart quality gate + DQ confidence labels (metadata/chart_quality.json)
 │   ├── evidence.py             # evidence_id minting + evidence_registry read/write (the only writer)
 │   ├── generic/ (descriptive✓ correlation✓ distribution✓ trend)
 │   └── domains/ (sales•finance•marketing•hr•operations)
 ├── shared/
+│   ├── core/                   # pure logic, no CrewAI — the unit-testable layer
+│   │   ├── validation.py       # file checks (extension, size, signature)
+│   │   ├── reader.py           # CSV/XLSX reading + sheet extraction
+│   │   ├── profiler.py         # data profiling + redacted sample
+│   │   ├── pii.py              # PII column detection (rules, no LLM)
+│   │   ├── business_context.py # business questions + Generic Mode
+│   │   ├── understanding.py    # column roles + domain + plan builder
+│   │   ├── data_quality.py     # stage-3 checks + deterministic repair
+│   │   ├── cleaning.py         # stage-4 strategy table + executor
+│   │   ├── contracts.py        # §3b column contracts + normalization layer (currency/percent/dates/units/categories)
+│   │   ├── deep_profile.py     # sentinel-aware missingness + MAD outliers + impact analysis
+│   │   ├── lineage.py          # raw→validated→repaired→cleaned→analysis_ready chain (metadata/lineage.json)
+│   │   └── io_utils.py         # large-data I/O: Parquet cache + chunked stats + row estimation
 │   ├── tools.py                # CrewAI @tool wrappers
 │   ├── schemas.py              # Pydantic
 │   ├── dsl_validator.py        # whitelist / DSL — used by both understanding_agent (build) and analyst_agent (execute)
@@ -594,8 +625,9 @@ insight-forge/
 ├── runs/                       # run isolation — the only writable surface per run
 │   └── <run_id>/               # extracted + processed data, all outputs, logs, manifest
 │       ├── data/               # raw/ extracted/ processed/
+│       │   └── processed/      # validated_data.csv · cleaned_data.csv (+_attempt_n) · analysis_ready.csv
 │       ├── knowledge/          # business_context.json (per-run Agent 1 output — distinct from resources/business_context/, which is the static template)
-│       ├── metadata/           # data_profile · dataset_understanding · analysis_plan · data_quality_report · cleaning_result · chart_metadata · report_result · qa_verdict
+│       ├── metadata/           # data_profile · dataset_understanding · analysis_plan · data_quality_report · data_contracts · contract_violations · deep_profile · cleaning_result · chart_metadata · chart_quality · impact_cleaning · lineage · report_result · qa_verdict
 │       ├── outputs/            # report.html · kpis.json · statistical_results.json · insights.json · evidence_registry.json · run_comparison.json · charts/
 │       ├── logs/               # LLM/tool logs
 │       └── master_manifest.json

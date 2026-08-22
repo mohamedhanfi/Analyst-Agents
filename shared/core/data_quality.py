@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from shared.core.contracts import parse_amount
 from shared.core.semantic_guards import NEGATIVE_ALLOWED_RE, is_mixed_unit
 from shared.schemas import (
     BusinessContext,
@@ -390,12 +391,21 @@ def deterministic_repair(understanding: DatasetUnderstanding,
         if col.role == "measure" and not dtype.startswith(
                 ("int", "float", "bool")):
             original_non_null = series.notna()
-            numeric = pd.to_numeric(series, errors="coerce")
-            coerced = int((original_non_null & numeric.isna()).sum())
-            if coerced:
-                coerced_to_null[name] = coerced
-            work[name] = numeric
-            type_casts[name] = f"object->{numeric.dtype}"
+            # §4.2: try human-formatted amount parsing FIRST so currency /
+            # percent / thousands strings ('$1,200', 'EGP 500', '12%') keep
+            # their real value instead of being coerced to NaN by to_numeric.
+            amount = series.map(parse_amount)
+            if amount.notna().mean() >= 0.95:
+                numeric = amount
+                type_casts[name] = "object->amount_float64"
+                work[name] = numeric
+            else:
+                numeric = pd.to_numeric(series, errors="coerce")
+                coerced = int((original_non_null & numeric.isna()).sum())
+                if coerced:
+                    coerced_to_null[name] = coerced
+                work[name] = numeric
+                type_casts[name] = f"object->{numeric.dtype}"
         elif col.role == "temporal" and not dtype.startswith(
                 ("datetime", "date")):
             original_non_null = series.notna()
@@ -455,6 +465,7 @@ def assemble_report(understanding: DatasetUnderstanding,
                      limits: Optional[Dict[str, Any]] = None,
                      log_tool: LogTool = None,
                      skip_repair: bool = False,
+                     with_frame: bool = False,
                       ) -> Tuple[DataQualityReport, Dict[str, Any]]:
     """Run every check + the deterministic repair; build the report.
 
@@ -467,6 +478,12 @@ def assemble_report(understanding: DatasetUnderstanding,
         If True (used for post-cleaning rechecks), skip the
         deterministic_repair step — the data has already been cleaned
         and CSV round-trips may re-introduce benign type mismatches.
+    with_frame : bool
+        If True, also return the repaired frame as a third value
+        (``(report, repair_log, repaired_df)``) so the caller can persist
+        it as the official ``validated`` dataset for the next stage
+        (lineage: raw -> validated -> repaired -> cleaned). With
+        ``skip_repair=True`` the returned frame is a copy of the input.
     """
     cfg_limits = dict(_default_limits())
     if limits:
@@ -506,8 +523,9 @@ def assemble_report(understanding: DatasetUnderstanding,
                      lambda: check_referential_integrity(understanding, df))
     if skip_repair:
         repair_log = {"repair_applied": False, "actions": []}
+        repaired_frame = df.copy()
     else:
-        _, repair_log = _timed(
+        repaired_frame, repair_log = _timed(
             "deterministic_repair_tool",
             lambda: deterministic_repair(understanding, df))
 
@@ -532,4 +550,6 @@ def assemble_report(understanding: DatasetUnderstanding,
         duplicates=duplicates,
         issues=[issue.to_dict() for issue in issues],
     )
+    if with_frame:
+        return report, repair_log, repaired_frame
     return report, repair_log

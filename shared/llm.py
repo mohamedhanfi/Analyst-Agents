@@ -31,7 +31,7 @@ import litellm
 # console spam — the web app keeps its console quiet.
 litellm.suppress_debug_info = True
 
-DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
+DEFAULT_MODEL = "openrouter/z-ai/glm-5.2:free"
 
 
 def build_llm(cfg: Dict[str, Any], agent_name: str) -> LLM:

@@ -102,27 +102,42 @@ def build_strategy(understanding: DatasetUnderstanding,
         rate = float(meta.get("rate", 0.0))
         assessment = str(meta.get("assessment", "none"))
         flags = invalid.get(col.name, [])
-        # 4.2/3.2: drop_negative is deterministic auto-apply for flagged
-        # negative measures — but never for measures whose semantics allow
-        # negatives (temperature, balance, growth, ...).
-        if (col.role == "measure" and any(
-                "negative" in str(item) for item in flags)
-                and not NEGATIVE_ALLOWED_RE.search(col.name)):
-            decision = {"action": "drop_negative",
-                        "detail": "negative_measure_flagged"}
-        # 4.4: sql_injection_suspected — sanitize by stripping suspicious
-        # SQL keywords and special characters from dimension columns.
-        elif any("sql_injection" in str(item) for item in flags):
-            decision = {"action": "sanitize_text",
-                        "detail": "sql_injection_suspected"}
+        # §2.4 missingness decision (role × rate × assessment) is always
+        # computed: a column may need BOTH drop_negative (4.2) AND a
+        # missingness action (median_fill for measure MCAR<5% etc.) — the
+        # executor applies every entry in order, so one column can carry
+        # multiple actions.
+        missing = _column_strategy(col.role, rate, assessment)
+        actions: List[Dict[str, Any]] = []
+        if missing["action"] == "drop_column":
+            # >70% missing: the column is gone — nothing else to do for it.
+            actions.append(missing)
         else:
-            decision = _column_strategy(col.role, rate, assessment)
-        columns.append({
-            "column": col.name,
-            "role": col.role,
-            "action": decision["action"],
-            "detail": decision["detail"],
-        })
+            # 4.2/3.2: drop_negative is deterministic auto-apply for flagged
+            # negative measures — but never for measures whose semantics allow
+            # negatives (temperature, balance, growth, ...). Runs first so
+            # downstream fills compute their statistic on non-negative values.
+            if (col.role == "measure" and any(
+                    "negative" in str(item) for item in flags)
+                    and not NEGATIVE_ALLOWED_RE.search(col.name)):
+                actions.append({"action": "drop_negative",
+                                "detail": "negative_measure_flagged"})
+            # 4.4: sql_injection_suspected — sanitize by stripping suspicious
+            # SQL keywords and special characters from dimension columns.
+            if any("sql_injection" in str(item) for item in flags):
+                actions.append({"action": "sanitize_text",
+                                "detail": "sql_injection_suspected"})
+            if missing["action"] != "keep":
+                actions.append(missing)
+        if not actions:
+            actions.append({"action": "keep", "detail": "no_missingness"})
+        for decision in actions:
+            columns.append({
+                "column": col.name,
+                "role": col.role,
+                "action": decision["action"],
+                "detail": decision["detail"],
+            })
     # Auto-populate outlier handling from DQ issues so cleaning stages
     # handle them and the recheck doesn't re-flag them.
     outlier_columns: Dict[str, str] = {}
@@ -206,41 +221,51 @@ def normalize_strategy(raw: Any,
         cleaned_outliers[name] = mode
 
     # Merge deterministic overrides for high-severity DQ issues that the
-    # LLM may not know about (e.g. sanitize_text for SQL injection).
+    # LLM may not know about (e.g. sanitize_text for SQL injection). The
+    # overrides are ADDED as additional entries (never replacing the LLM's
+    # chosen action): a column flagged negative still keeps its missingness
+    # handling (median_fill etc.), and drop_negative is placed before the
+    # column's other actions so fills run on non-negative values.
     if dq_report is not None:
         invalid = dq_report.invalid or {}
-        col_names = {c["column"]: c for c in columns}
         for col_name, flags in invalid.items():
-            if any("sql_injection" in str(f) for f in flags):
-                if col_name in col_names:
-                    col_names[col_name]["action"] = "sanitize_text"
-                else:
-                    meta = known_columns.get(col_name)
-                    columns.append({
-                        "column": col_name,
-                        "role": meta.role if meta else "dimension",
-                        "action": "sanitize_text",
-                        "detail": "sql_injection_suspected",
-                    })
-            if any("negative" in str(f) for f in flags):
-                meta = known_columns.get(col_name)
-                if meta and meta.role == "measure" \
-                        and not NEGATIVE_ALLOWED_RE.search(col_name):
-                    if col_name in col_names:
-                        col_names[col_name]["action"] = "drop_negative"
-                    else:
-                        columns.append({
-                            "column": col_name,
-                            "role": "measure",
-                            "action": "drop_negative",
-                            "detail": "negative_measure_flagged",
-                        })
+            meta = known_columns.get(col_name)
+            if any("sql_injection" in str(f) for f in flags) \
+                    and not _entry_has_action(columns, col_name,
+                                              "sanitize_text"):
+                _insert_action(columns, col_name,
+                               meta.role if meta else "dimension",
+                               "sanitize_text", "sql_injection_suspected")
+            if any("negative" in str(f) for f in flags) and meta \
+                    and meta.role == "measure" \
+                    and not NEGATIVE_ALLOWED_RE.search(col_name) \
+                    and not _entry_has_action(columns, col_name,
+                                              "drop_negative"):
+                _insert_action(columns, col_name, "measure",
+                               "drop_negative", "negative_measure_flagged")
 
     return {
         "columns": columns,
         "deduplicate": bool(raw.get("deduplicate", default["deduplicate"])),
         "outliers": cleaned_outliers,
     }, errors
+
+
+def _entry_has_action(columns: List[Dict[str, Any]], column: str,
+                      action: str) -> bool:
+    return any(c["column"] == column and c["action"] == action
+               for c in columns)
+
+
+def _insert_action(columns: List[Dict[str, Any]], column: str, role: str,
+                   action: str, detail: str) -> None:
+    """Insert an action entry before the column's existing entries so it
+    executes first (drop_negative before fills/flags)."""
+    entry = {"column": column, "role": role, "action": action,
+             "detail": detail}
+    index = next((i for i, c in enumerate(columns)
+                  if c["column"] == column), len(columns))
+    columns.insert(index, entry)
 
 
 def _empty_report() -> DataQualityReport:

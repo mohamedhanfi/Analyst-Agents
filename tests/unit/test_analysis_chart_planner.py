@@ -9,6 +9,7 @@ from analysis.chart_planner import (
     rank_candidates,
     truncate,
 )
+from analysis.chart_renderer import render_chart
 from analysis.evidence import EvidenceRegistry
 from shared.schemas import AnalysisPlan, ChartMetadata, DslOperation, KpiCandidate
 from tests.unit.conftest import SALES
@@ -50,6 +51,26 @@ def test_growth_line_rule_2(make_understanding):
     line = next(c for c in results if c.kind == "line")
     assert "rule_2" in line.reason
     assert line.columns == ["date", "revenue"]
+
+
+def test_growth_kpi_emits_waterfall_rule_11(make_understanding):
+    kpi = _kpi("K1", "revenue growth", function="growth",
+               column="revenue", over_column="date", period="MoM")
+    results, _ = plan_charts(SALES, _plan(kpi),
+                             make_understanding(SALES), _registry(),
+                             **NOT_THIN)
+    line = next(c for c in results if c.kind == "line")
+    assert "rule_2" in line.reason
+    waterfall = next(c for c in results if c.kind == "waterfall")
+    assert "rule_11" in waterfall.reason
+    assert waterfall.columns == ["date", "revenue"]
+    from shared.schemas import KpiResult
+    svg = render_chart(waterfall, SALES, [
+        KpiResult(kpi_id="K1", name="revenue growth",
+                  operation=DslOperation(function="growth", column="revenue",
+                                         over_column="date", period="MoM"))])
+    assert "total" in svg
+    assert "<rect" in svg
 
 
 def test_growth_too_few_points_downgrades_low_n(make_understanding):
@@ -97,8 +118,17 @@ def test_three_to_twelve_values_vertical_bar_rule_3(make_understanding):
                                        temporal=(), dimensions=("month",))
     results, _ = plan_charts(frame, _plan(kpi), understanding, _registry(),
                              **NOT_THIN)
-    bar = next(c for c in results if c.kind == "bar")
-    assert "rule_3" in bar.reason
+    # Rule 10: a ranked sum contribution in the 3-15 band is a Pareto,
+    # not a plain vertical bar — sorted bars + cumulative % line.
+    pareto = next(c for c in results if c.kind == "pareto")
+    assert "rule_10" in pareto.reason
+    from shared.schemas import KpiResult
+    svg = render_chart(pareto, frame, [
+        KpiResult(kpi_id="K1", name="revenue by month",
+                  operation=DslOperation(function="sum", column="revenue",
+                                         group_by=["month"]))])
+    assert "polyline" in svg           # cumulative % line
+    assert "80%" in svg                # 80/20 reference line
 
 
 def test_thirteen_to_fifty_values_horizontal_bar_rule_4(make_understanding):
@@ -106,8 +136,8 @@ def test_thirteen_to_fifty_values_horizontal_bar_rule_4(make_understanding):
         "product": [f"p{i:02d}" for i in range(13)],
         "revenue": [float(i * 10) for i in range(13)],
     })
-    kpi = _kpi("K1", "revenue by product", column="revenue",
-               group_by=["product"])
+    kpi = _kpi("K1", "revenue by product", function="mean",
+               column="revenue", group_by=["product"])
     understanding = make_understanding(frame, measures=("revenue",),
                                        temporal=(), dimensions=("product",))
     results, _ = plan_charts(frame, _plan(kpi), understanding, _registry(),

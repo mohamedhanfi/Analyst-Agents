@@ -9,6 +9,7 @@ import pytest
 
 from analysis.qa_recompute import (
     QaCheck,
+    check_report_consistency,
     compare_kpis,
     recompute_kpis,
     run_all_checks,
@@ -268,3 +269,118 @@ def test_run_all_checks_empty(tmp_path: Path) -> None:
     assert len(checks) > 0
     crits = [c for c in checks if c.severity == "critical"]
     assert len(crits) >= 1
+
+
+# ---------------------------------------------------------------------------
+# check_report_consistency — narrative text vs dataset facts
+# ---------------------------------------------------------------------------
+
+
+def _make_run_narrative(tmp_path: Path, summary_text: str,
+                        has_temporal: bool = True,
+                        removed: int = 2) -> Path:
+    run_dir = tmp_path / "run_narrative"
+    (run_dir / "outputs").mkdir(parents=True)
+    (run_dir / "metadata").mkdir(parents=True)
+    (run_dir / "outputs" / "exec_summary.txt").write_text(
+        summary_text, encoding="utf-8")
+    understanding = {
+        "has_temporal_data": has_temporal,
+        "temporal_columns": ["date"] if has_temporal else [],
+        "columns": ([{"name": "date", "role": "temporal"}]
+                    if has_temporal else []),
+    }
+    (run_dir / "metadata" / "dataset_understanding.json").write_text(
+        json.dumps(understanding), encoding="utf-8")
+    ops: List[Dict[str, Any]] = []
+    if removed:
+        ops.append({"op": "dedup", "rows_affected": 0})
+        ops.append({"op": "drop_negative", "column": "revenue",
+                    "rows_affected": removed})
+    lineage = {"steps": [{"stage": "cleaned", "artifact": "cleaned.csv",
+                          "rows_before": 200, "rows_after": 200 - removed,
+                          "ops": ops}]}
+    (run_dir / "metadata" / "lineage.json").write_text(
+        json.dumps(lineage), encoding="utf-8")
+    (run_dir / "metadata" / "cleaning_result.json").write_text(
+        json.dumps({"rows_before": 200, "rows_after": 200 - removed,
+                    "duplicates_removed": 0}), encoding="utf-8")
+    return run_dir
+
+
+def test_check_report_consistency_temporal_contradiction(
+        tmp_path: Path) -> None:
+    run_dir = _make_run_narrative(
+        tmp_path,
+        "Sales were steady. However, the lack of time-stamped data "
+        "limited trend analysis.")
+    checks = check_report_consistency(run_dir)
+    hits = [c for c in checks
+            if c.check == "exec_summary_temporal_contradiction"]
+    assert len(hits) == 1
+    assert hits[0].severity == "warning"
+    assert "date" in hits[0].message
+
+
+def test_check_report_consistency_no_false_positive_missing_dates(
+        tmp_path: Path) -> None:
+    run_dir = _make_run_narrative(
+        tmp_path, "There were no missing dates across the period.")
+    checks = check_report_consistency(run_dir)
+    assert not [c for c in checks
+                if c.check == "exec_summary_temporal_contradiction"]
+
+
+def test_check_report_consistency_cleaning_contradiction(
+        tmp_path: Path) -> None:
+    run_dir = _make_run_narrative(
+        tmp_path, "No data was removed during preparation.")
+    checks = check_report_consistency(run_dir)
+    hits = [c for c in checks
+            if c.check == "exec_summary_cleaning_contradiction"]
+    assert len(hits) == 1
+    assert "dropped 2 row(s)" in hits[0].message
+
+
+def test_check_report_consistency_honest_summary_passes(
+        tmp_path: Path) -> None:
+    run_dir = _make_run_narrative(
+        tmp_path,
+        "Totals reflect 198 orders after removing 4 problematic rows.")
+    assert check_report_consistency(run_dir) == []
+
+
+def test_check_report_consistency_empty_summary(tmp_path: Path) -> None:
+    run_dir = _make_run_narrative(tmp_path, "")
+    (run_dir / "outputs" / "exec_summary.txt").unlink()
+    assert check_report_consistency(run_dir) == []
+
+
+def test_cleaning_removed_rows_from_lineage(tmp_path: Path) -> None:
+    from analysis.qa_recompute import _cleaning_removed_rows
+    lineage = {"steps": [
+        {"stage": "repaired", "ops": [{"op": "dedup", "rows_affected": 2}]},
+        {"stage": "cleaned",
+         "ops": [{"op": "drop_negative", "column": "revenue",
+                  "rows_affected": 2},
+                 {"op": "dedup", "rows_affected": 0}]},
+    ]}
+    assert _cleaning_removed_rows({}, lineage) == 4
+
+
+def test_cleaning_removed_rows_fallback_cleaning_result() -> None:
+    from analysis.qa_recompute import _cleaning_removed_rows
+    cleaning = {"rows_before": 202, "rows_after": 198,
+                "duplicates_removed": 2}
+    assert _cleaning_removed_rows(cleaning, {}) == 4
+
+
+def test_check_report_consistency_unicode_hyphen(tmp_path: Path) -> None:
+    run_dir = _make_run_narrative(
+        tmp_path,
+        "The biggest risk is the lack of time\u2011stamped data needed "
+        "to compute growth metrics.")
+    checks = check_report_consistency(run_dir)
+    hits = [c for c in checks
+            if c.check == "exec_summary_temporal_contradiction"]
+    assert len(hits) == 1

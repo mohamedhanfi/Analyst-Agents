@@ -204,9 +204,10 @@ def _run_deterministic(run_dir: Path, cfg: Dict[str, Any],
     log.tool_call(STAGE, "cleaning_strategy_tool", "passed",
                   time.monotonic() - t0)
 
-    result, final_status = _clean_with_rechecks(
+    result, final_status, ops = _clean_with_rechecks(
         run_dir, df, strategy, understanding, profile, context, limits, log)
     _save_result(run_dir, result)
+    _finalize_lineage(run_dir, result, ops)
 
     return _summary(result, run_dir, final_status)
 
@@ -251,9 +252,10 @@ def _finalize_cleaning(run_dir: Path, result, cfg: Dict[str, Any],
         strategy = build_strategy(understanding, dq_report)
         warnings.append("llm_strategy_missing_default_used")
 
-    result_obj, final_status = _clean_with_rechecks(
+    result_obj, final_status, ops = _clean_with_rechecks(
         run_dir, df, strategy, understanding, profile, context, limits, log)
     _save_result(run_dir, result_obj)
+    _finalize_lineage(run_dir, result_obj, ops)
     return result_obj, final_status, warnings
 
 
@@ -264,13 +266,20 @@ def _clean_with_rechecks(run_dir: Path, df: pd.DataFrame,
                          context: BusinessContext,
                          limits: Dict[str, Any],
                          log: RunLogger
-                         ) -> Tuple[CleaningResult, str]:
+                         ) -> Tuple[CleaningResult, str, List[Dict[str, Any]]]:
     max_rechecks = int((limits or {}).get("cleaning_max_rechecks", 3))
     rows_before = len(df)
-    current = df
+    # §4.2: normalization layer (currency/percent/dates/units/categories)
+    # runs BEFORE the strategy — re-expresses values canonically without
+    # inventing anything; its ops are part of the cleaning lineage.
+    from shared.core.contracts import (build_contracts, load_contracts,
+                                       normalize_columns)
+    contracts = load_contracts(run_dir) or build_contracts(understanding, df)
+    current, norm_ops = normalize_columns(df, understanding, contracts)
     attempt = 0
     result = None
     final_status = "failed"
+    final_ops: List[Dict[str, Any]] = []
 
     while attempt < max_rechecks:
         attempt += 1
@@ -293,6 +302,7 @@ def _clean_with_rechecks(run_dir: Path, df: pd.DataFrame,
             attempt=attempt, rows_before=rows_before, rows_after=len(cleaned),
             duplicates_removed=dups, type_casts=casts, flags_created=flags,
             outliers=outliers, status=status)
+        final_ops = norm_ops + ops
         if final_status == "passed":
             break
         current = cleaned
@@ -300,7 +310,7 @@ def _clean_with_rechecks(run_dir: Path, df: pd.DataFrame,
     if final_status != "passed":
         log.fallback(STAGE, "cleaning_retry_limit_exceeded")
 
-    return result, final_status
+    return result, final_status, final_ops
 
 
 def _recheck_data_quality(df: pd.DataFrame,
@@ -346,8 +356,12 @@ def _summary(result: CleaningResult, run_dir: Path,
         "outliers": result.outliers,
         "cleaned_data_path": str(run_dir / "data" / "processed"
                                  / "cleaned_data.csv"),
+        "analysis_ready_path": str(run_dir / "data" / "processed"
+                                   / "analysis_ready.csv"),
+        "lineage_path": str(run_dir / "metadata" / "lineage.json"),
         "cleaning_result_path": str(run_dir / "metadata"
                                     / "cleaning_result.json"),
+        "impact_path": str(run_dir / "metadata" / "impact_cleaning.json"),
         "errors": [],
     }
 
@@ -394,16 +408,25 @@ def _find_extracted_csv(run_dir: Path) -> Path | None:
     return csvs[0] if csvs else None
 
 
+def _find_validated_csv(run_dir: Path) -> Path | None:
+    """Official Stage-3 output (deterministic repair). Fall back to the raw
+    extracted CSV for pre-lineage runs (lineage: repaired -> cleaned)."""
+    validated = run_dir / "data" / "processed" / "validated_data.csv"
+    if validated.is_file():
+        return validated
+    return _find_extracted_csv(run_dir)
+
+
 def _load_all(run_dir: Path):
     profile = _load_profile(run_dir)
     context = _load_context(run_dir)
     understanding = _load_understanding(run_dir)
     dq_report = _load_dq_report(run_dir)
-    extracted = _find_extracted_csv(run_dir)
-    if extracted is None:
+    source = _find_validated_csv(run_dir)
+    if source is None:
         raise RuntimeError(
             "No extracted CSV under data/extracted/ - run Stage 1 first.")
-    df = pd.read_csv(extracted, encoding="utf-8-sig")
+    df = pd.read_csv(source, encoding="utf-8-sig")
     return understanding, profile, context, dq_report, df
 
 
@@ -413,6 +436,58 @@ def _save_result(run_dir: Path, result: CleaningResult) -> None:
     (metadata / "cleaning_result.json").write_text(
         json.dumps(result.model_dump(), ensure_ascii=False, indent=2),
         encoding="utf-8")
+
+
+def _finalize_lineage(run_dir: Path, result: CleaningResult,
+                      ops: List[Dict[str, Any]]) -> None:
+    """Append cleaned + analysis_ready steps to metadata/lineage.json.
+
+    analysis_ready.csv is the frozen frame the analysis stage reads —
+    the cleaned data after the DQ recheck passed (identity copy of
+    cleaned_data.csv). Also writes the validated -> cleaned impact
+    analysis (metadata/impact_cleaning.json)."""
+    from shared.core.lineage import append_steps, artifact_step
+
+    processed = run_dir / "data" / "processed"
+    cleaned = processed / "cleaned_data.csv"
+    if not cleaned.is_file():
+        return
+    ready = processed / "analysis_ready.csv"
+    if not ready.is_file() or ready.read_bytes() != cleaned.read_bytes():
+        import shutil
+        shutil.copyfile(cleaned, ready)
+
+    steps = [
+        artifact_step(run_dir, "cleaned",
+                      "data/processed/cleaned_data.csv",
+                      rows_before=result.rows_before,
+                      rows_after=result.rows_after, ops=ops),
+        artifact_step(run_dir, "analysis_ready",
+                      "data/processed/analysis_ready.csv",
+                      rows_before=result.rows_after,
+                      rows_after=result.rows_after,
+                      ops=[{"op": "freeze",
+                            "detail": "DQ recheck passed; identity copy"}],
+                      ),
+    ]
+    append_steps(run_dir, steps)
+
+    try:
+        import pandas as pd
+        from shared.core.deep_profile import impact_analysis
+        from shared.schemas import DatasetUnderstanding
+        understanding = _load_understanding(run_dir)
+        validated = _find_validated_csv(run_dir)
+        before = (pd.read_csv(validated, encoding="utf-8-sig")
+                  if validated and validated.is_file() else pd.DataFrame())
+        after = pd.read_csv(cleaned, encoding="utf-8-sig")
+        if not before.empty:
+            impact = impact_analysis(understanding, before, after)
+            (run_dir / "metadata" / "impact_cleaning.json").write_text(
+                json.dumps(impact, ensure_ascii=False, indent=2),
+                encoding="utf-8")
+    except Exception:  # noqa: BLE001 -- impact is best-effort, never blocks
+        pass
 
 
 # ---------------------------------------------------------------------------

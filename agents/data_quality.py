@@ -91,10 +91,11 @@ def _run(run_dir: Path, cfg: Dict[str, Any],
     def log_tool(name: str, duration_s: float, status: str) -> None:
         log.tool_call(STAGE, name, status, round(duration_s, 3))
 
-    report, repair_log = assemble_report(
+    is_recheck = data_source == "cleaned"
+    report, repair_log, repaired_df = assemble_report(
         understanding=understanding, profile=profile, df=df,
         context=context, limits=limits, log_tool=log_tool,
-        skip_repair=(data_source == "cleaned"))
+        skip_repair=is_recheck, with_frame=True)
 
     metadata = run_dir / "metadata"
     metadata.mkdir(parents=True, exist_ok=True)
@@ -105,19 +106,113 @@ def _run(run_dir: Path, cfg: Dict[str, Any],
         json.dumps(repair_log, ensure_ascii=False, indent=2),
         encoding="utf-8")
 
+    # Data contracts (heuristic): the declared shape each column is measured
+    # against. Saved for Cleaning's normalization layer + the report.
+    contracts: List[Any] = []
+    contract_violations: List[Dict[str, Any]] = []
+    if not is_recheck:
+        from shared.core.contracts import (build_contracts,
+                                           save_contracts,
+                                           validate_contracts)
+        contracts = build_contracts(understanding, df)
+        contract_violations = validate_contracts(contracts, df)
+        save_contracts(run_dir, contracts)
+        (metadata / "contract_violations.json").write_text(
+            json.dumps(contract_violations, ensure_ascii=False, indent=2),
+            encoding="utf-8")
+
+    validated_path = None
+    if not is_recheck:
+        # Deep profile (improvement plan 3-5): sentinel-aware missingness,
+        # MAD outlier flags, and raw -> repaired impact. Saved once on the
+        # raw extraction (not re-checked against cleaned output).
+        from shared.core.deep_profile import (deep_missingness_report,
+                                              deep_outlier_report,
+                                              impact_analysis)
+        deep_profile = {
+            "missingness": deep_missingness_report(understanding, df),
+            "outliers": deep_outlier_report(understanding, df),
+            "impact_raw_to_validated": impact_analysis(understanding, df,
+                                                       repaired_df),
+        }
+        (metadata / "deep_profile.json").write_text(
+            json.dumps(deep_profile, ensure_ascii=False, indent=2),
+            encoding="utf-8")
+        # Lineage: the deterministic repair output becomes the official
+        # source for Cleaning (repaired = validated_data.csv).
+        processed = run_dir / "data" / "processed"
+        processed.mkdir(parents=True, exist_ok=True)
+        validated_path = processed / "validated_data.csv"
+        repaired_df.to_csv(validated_path, index=False,
+                           encoding="utf-8-sig")
+        _write_lineage(run_dir, profile, csv_path, validated_path, df,
+                       repaired_df, repair_log)
+
     return {
         "stage": STAGE, "status": report.status,
         "missingness_rate": report.missingness.get("rate", 0.0),
         "missingness_assessment": report.missingness.get("assessment",
-                                                         "none"),
+                                                          "none"),
         "duplicates": report.duplicates,
         "invalid_columns": sorted(report.invalid.keys()),
         "repair_applied": repair_log["repair_applied"],
         "data_quality_report_path": str(metadata
                                         / "data_quality_report.json"),
         "repair_log_path": str(metadata / "repair_log.json"),
+        "validated_data_path": str(validated_path) if validated_path
+        else None,
+        "contracts_path": str(metadata / "data_contracts.json")
+        if not is_recheck else None,
+        "contract_violations_count": len(contract_violations),
+        "deep_profile_path": str(metadata / "deep_profile.json")
+        if not is_recheck else None,
         "errors": [],
     }
+
+
+def _write_lineage(run_dir: Path, profile: DataProfile, input_csv: Path,
+                   validated_path: Path, df, repaired_df,
+                   repair_log: Dict[str, Any]) -> None:
+    """Record raw -> validated -> repaired steps in metadata/lineage.json."""
+    from shared.core.lineage import (artifact_step, file_sha256,
+                                     step, write_lineage)
+
+    repair_ops: List[Dict[str, Any]] = []
+    for column, count in (repair_log.get("coerced_to_null") or {}).items():
+        repair_ops.append({"op": "coerce_to_null", "column": column,
+                           "rows_affected": count})
+    for column, detail in (repair_log.get("type_casts") or {}).items():
+        repair_ops.append({"op": "type_cast", "column": column,
+                           "detail": detail})
+    impossible = repair_log.get("impossible_rows_dropped") or {}
+    if impossible:
+        repair_ops.append({
+            "op": "drop_impossible",
+            "columns": sorted(impossible.keys()),
+            "rows_affected": len({i for rows in impossible.values()
+                                  for i in rows}),
+        })
+    dups = int(repair_log.get("duplicates_removed", 0) or 0)
+    if dups:
+        repair_ops.append({"op": "dedup", "rows_affected": dups})
+
+    rel_extracted = input_csv.relative_to(run_dir).as_posix() \
+        if input_csv.is_relative_to(run_dir) else str(input_csv)
+    steps = [
+        step(stage="raw", artifact=profile.file_name or "",
+             hash=profile.file_hash or "", rows_after=len(df),
+             ops=[{"op": "upload", "detail": "source file as provided"}]),
+        artifact_step(run_dir, "validated", rel_extracted,
+                      rows_before=len(df), rows_after=len(df),
+                      ops=[{"op": "parse", "detail": "validated + extracted"}]),
+        artifact_step(
+            run_dir, "repaired",
+            validated_path.relative_to(run_dir).as_posix(),
+            rows_before=len(df), rows_after=len(repaired_df),
+            ops=repair_ops),
+    ]
+    write_lineage(run_dir, profile.file_name or "", profile.file_hash or "",
+                  steps, source_path=str(input_csv))
 
 
 # ---------------------------------------------------------------------------

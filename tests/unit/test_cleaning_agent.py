@@ -124,8 +124,14 @@ def test_cleaning_drops_negative_measure(tmp_path, cfg):
 
 
 def test_cleaning_stops_after_retry_cap(tmp_path, cfg):
+    # A percent measure above 100 is high-severity and is NOT fixed by the
+    # deterministic DQ repair NOR by the cleaning strategy — the recheck
+    # keeps failing and the retry cap trips. (The old impossible-date
+    # scenario now passes because DQ repair drops the bad row into
+    # validated_data.csv before cleaning even reads it — lineage fix.)
     rows = _sales_rows()
-    rows[0]["date"] = "2100-01-01"  # impossible temporal -> never passes
+    for row in rows:
+        row["discount_pct"] = 150.0  # over_100_percent -> never passes
     run_dir = _build_stage3(tmp_path, cfg, pd.DataFrame(rows))
     s = run_cleaning(run_dir, cfg=cfg)
     assert s["status"] == "failed"

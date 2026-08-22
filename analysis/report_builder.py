@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "resources"
 _TEMPLATE_NAME = "report_template.html"
 _SECTIONS = [
-    "executive_summary", "business_context", "dq_summary",
+    "executive_summary", "cleaning", "business_context", "dq_summary",
     "data_overview", "kpis", "stats", "charts",
     "insights", "recommendations", "limitations", "evidence",
     "run_comparison",
@@ -77,6 +77,7 @@ def load_artifacts(run_dir: Path) -> Dict[str, Any]:
     understanding_raw = _load_json(meta / "dataset_understanding.json")
     dq_raw = _load_json(meta / "data_quality_report.json")
     cleaning_raw = _load_json(meta / "cleaning_result.json")
+    lineage_raw = _load_json(meta / "lineage.json")
 
     return {
         "kpis": kpis_raw.get("kpis", []) if isinstance(kpis_raw, dict)
@@ -102,6 +103,7 @@ def load_artifacts(run_dir: Path) -> Dict[str, Any]:
         "dq_report": dq_raw if isinstance(dq_raw, dict) else {},
         "cleaning_result": cleaning_raw
         if isinstance(cleaning_raw, dict) else {},
+        "lineage": lineage_raw if isinstance(lineage_raw, dict) else {},
         "run_comparison": _load_json(out / "run_comparison.json")
         if isinstance(_load_json(out / "run_comparison.json"), dict) else {},
     }
@@ -151,9 +153,51 @@ def _kpi_relevance(kpi: Dict[str, Any]) -> tuple[float, float]:
     return relevance, magnitude
 
 
-def render_kpis(kpis: List[Dict[str, Any]]) -> str:
+def _kpi_variance(kpi: Dict[str, Any], df: pd.DataFrame,
+                  understanding: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Period-over-period variance for a plain aggregate KPI (context card).
+
+    Compares the latest period's value with the previous period's for
+    plain sum/mean/median/count/nunique aggregates over a measure. Returns
+    None when there is no temporal column, a group_by/over filter, or the
+    comparison is impossible — the card renders without context."""
+    op = kpi.get("operation") or {}
+    function = str(op.get("function", ""))
+    if function not in ("sum", "mean", "median", "count", "nunique"):
+        return None
+    if op.get("group_by") or op.get("over_column") or op.get("filter"):
+        return None
+    column = str(op.get("column") or "")
+    temporal = [c.get("name") for c in (understanding or {}).get(
+        "columns", []) if c.get("role") == "temporal"]
+    if not temporal or temporal[0] not in df.columns or not column \
+            or column not in df.columns:
+        return None
+    parsed = pd.to_datetime(df[temporal[0]], errors="coerce")
+    period = parsed.dt.to_period("M")
+    agg = {"sum": "sum", "mean": "mean", "median": "median",
+           "count": "count", "nunique": "nunique"}[function]
+    grouped = df.groupby(period, dropna=False)[column].agg(agg)
+    if len(grouped) < 2:
+        return None
+    keys = sorted(grouped.index)
+    prev, cur = float(grouped[keys[-2]]), float(grouped[keys[-1]])
+    delta = cur - prev
+    pct = (delta / prev * 100.0) if prev else None
+    return {"period": str(keys[-1]), "previous": prev, "current": cur,
+            "delta": delta,
+            "delta_pct": round(pct, 2) if pct is not None else None}
+
+
+def render_kpis(kpis: List[Dict[str, Any]], df: pd.DataFrame | None = None,
+                understanding: Dict[str, Any] | None = None) -> str:
     """Render top KPI metric cards (up to 4), ranked by business relevance
-    (5.5) rather than plan order or statistical variance alone."""
+    (5.5) rather than plan order or statistical variance alone.
+
+    ``df``/``understanding`` (optional) add the period-over-period variance
+    badge to each card — the "value + context" improvement (item 8): a
+    number alone says nothing, the delta against the previous period does.
+    """
     if not kpis:
         return '<p class="text-secondary">No KPIs computed.</p>'
     parts: List[str] = []
@@ -162,15 +206,53 @@ def render_kpis(kpis: List[Dict[str, Any]]) -> str:
         val = kpi.get("value")
         formatted = _fmt(float(val)) if val is not None else "N/A"
         name = kpi.get("name", kpi.get("kpi_id", "KPI"))
+        context_html = ""
+        if df is not None and understanding is not None:
+            variance = _kpi_variance(kpi, df, understanding)
+            if variance is not None:
+                delta = variance["delta"]
+                arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "—")
+                color = "green" if delta > 0 else \
+                    ("red" if delta < 0 else "muted")
+                pct = (f"{abs(variance['delta_pct']):.1f}%"
+                       if variance["delta_pct"] is not None else "")
+                context_html = (
+                    f'<div class="delta {color}">{arrow} {pct} '
+                    f'vs {_esc(str(variance["period"]))}</div>')
         parts.append(
             f'<div class="card metric h-100"><div class="card-body">'
             f'<div class="lbl"><span>{_esc(name)}</span></div>'
             f'<div class="val">{_esc(formatted)}</div>'
+            f'{context_html}'
             f'</div></div>'
         )
     cols = "".join(f'<div class="col-sm-6 col-xl-3">{p}</div>'
                    for p in parts)
     return f'<div class="row g-4">{cols}</div>'
+
+
+def render_chart_quality(run_dir: Path) -> str:
+    """Confidence banner for the charts section: the quality-gate verdict
+    + the DQ confidence label stamped on every figure."""
+    quality = _load_json(run_dir / "metadata" / "chart_quality.json")
+    if not isinstance(quality, dict) or not quality.get("charts"):
+        return ""
+    summary = quality.get("summary") or {}
+    failed = int(summary.get("failed", 0))
+    warned = int(summary.get("warned", 0))
+    passed = int(summary.get("passed", 0))
+    label = (quality.get("data_quality_label") or {})
+    label_text = _esc(str(label.get("label", "unknown")))
+    detail = _esc(str(label.get("detail", "")))
+    if failed or warned:
+        tone = "danger" if failed else "warning"
+        text = (f"{failed} chart(s) failed the quality gate, "
+                f"{warned} warned, {passed} passed. "
+                f"Data-confidence: {label_text} — {detail}")
+        return (f'<div class="alert alert-{tone} mb-3">{_esc(text)}</div>')
+    return (f'<div class="alert alert-success mb-3">All {passed} charts '
+            f'passed the quality gate. Data-confidence: {label_text} '
+            f'— {detail}</div>')
 
 
 def render_stats(stats: List[Dict[str, Any]]) -> str:
@@ -220,18 +302,52 @@ _INTERACTIVE_KINDS = frozenset({
 
 
 def _load_chart_df(run_dir: Path) -> Any | None:
-    """The same cleaned frame the analysis stage rendered the SVGs from."""
-    cleaned = Path(run_dir) / "data" / "processed" / "cleaned_data.csv"
-    if not cleaned.is_file():
-        return None
+    """The same cleaned frame the analysis stage rendered the SVGs from
+    (analysis_ready first, parquet cache supported for large files)."""
+    from shared.core.io_utils import read_analysis_dataframe
     try:
-        return pd.read_csv(cleaned, encoding="utf-8-sig")
+        return read_analysis_dataframe(run_dir)
     except Exception:  # noqa: BLE001 -- report must still render
         return None
 
 
 def _dataset_label(meta: ChartMetadata) -> str:
     return meta.columns[0] if meta.columns else (meta.title or "")
+
+
+def _chart_drilldown(ch: Dict[str, Any], cfg: Dict[str, Any],
+                     df: Any) -> str:
+    """Collapsible drill-down table under each interactive figure.
+
+    Reuses the exact Chart.js payload (labels + first dataset) so the
+    table always matches the drawing; adds the underlying row count so
+    the reader can see the size the chart aggregated over."""
+    labels = cfg.get("data", {}).get("labels") or []
+    datasets = cfg.get("data", {}).get("datasets") or []
+    if not labels or not datasets:
+        return ""
+    series = datasets[0].get("data") or []
+    if not series or len(labels) != len(series):
+        return ""
+    rows_html: List[str] = []
+    for label, value in zip(labels, series):
+        rows_html.append(
+            f"<tr><td>{_esc(str(label))}</td>"
+            f"<td class='text-end'>{_esc(_fmt(float(value)) if value is not None else '—')}</td></tr>")
+    body = "\n".join(rows_html)
+    total = sum(float(v) for v in series if v is not None) if series else 0.0
+    n_rows = len(df) if df is not None else 0
+    summary = (f"Drill-down: {len(labels)} groups · "
+               f"total {_fmt(total)} · {n_rows} source rows")
+    return (
+        f"<details class='chart-drilldown mt-2'>"
+        f"<summary class='small text-secondary'>{_esc(summary)}</summary>"
+        f"<div class='table-responsive mt-2'><table "
+        f"class='table table-sm table-striped'>"
+        f"<thead><tr><th>Group</th><th class='text-end'>Value</th></tr>"
+        f"</thead><tbody>{body}</tbody></table></div>"
+        f"</details>"
+    )
 
 
 def _empty_scatter_cfg() -> Dict[str, Any]:
@@ -407,6 +523,7 @@ _JS_INIT = """\
 <script>
 window.__REPORT_CHARTS__ = %s;
 (function(){
+  window.__REPORT_CHART_INSTANCES__ = [];
   function fmt(v){
     if (v === null || v === undefined || typeof v !== 'number' || isNaN(v)) return '';
     if (Number.isInteger(v)) return v.toLocaleString('en-US');
@@ -426,6 +543,10 @@ window.__REPORT_CHARTS__ = %s;
     if (img) img.style.display = '';
   }
   function init(){
+    window.__REPORT_CHART_INSTANCES__.forEach(function(inst){
+      try { inst.destroy(); } catch (e) {}
+    });
+    window.__REPORT_CHART_INSTANCES__ = [];
     var CFG = window.__REPORT_CHARTS__ || {};
     var hasChart = (typeof Chart !== 'undefined');
     Object.keys(CFG).forEach(function(id){
@@ -466,10 +587,21 @@ window.__REPORT_CHARTS__ = %s;
           c.options.plugins.datalabels = { display: false };
         }
       }
-      try { new Chart(el, c); }
+      try {
+        var inst = new Chart(el, c);
+        window.__REPORT_CHART_INSTANCES__.push(inst);
+      }
       catch (e) { fallback(id); }
     });
   }
+  function rebuildCharts(){
+    window.__REPORT_CHART_INSTANCES__.forEach(function(inst){
+      try { inst.destroy(); } catch (e) {}
+    });
+    window.__REPORT_CHART_INSTANCES__ = [];
+    init();
+  }
+  window.__rebuildReportCharts = rebuildCharts;
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else { init(); }
@@ -528,6 +660,7 @@ def render_charts(charts: List[Dict[str, Any]], run_dir: Path,
                 f'alt="{_esc(title)}" class="chart-static img-fluid rounded" '
                 f'loading="lazy" />'
                 f'<figcaption>{caption}</figcaption>'
+                f'{_chart_drilldown(ch, cfg, df)}'
                 f'</figure>'
             )
         else:
@@ -749,6 +882,90 @@ def render_dq_summary(dq: Dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+# Human-readable labels for lineage ops (§2.4 disclosure).
+_OP_LABELS = {
+    "upload": "source file ingested",
+    "parse": "validated + extracted",
+    "type_cast": "type cast",
+    "dedup": "duplicate rows removed",
+    "parse_datetime": "datetime normalized",
+    "drop_negative": "negative-value rows dropped",
+    "fillna_median": "missing values filled with median",
+    "fillna_mean": "missing values filled with mean",
+    "fillna_constant": "missing values filled",
+    "drop_missing": "rows with missing values dropped",
+    "drop_outlier": "outlier rows dropped",
+    "sanitize_text": "text sanitized",
+    "freeze": "no further changes",
+}
+_PASSIVE_OPS = frozenset({"upload", "parse", "freeze"})
+
+
+def render_cleaning(lineage: Dict[str, Any],
+                    cleaning_result: Dict[str, Any] | None = None) -> str:
+    """Deterministic disclosure of every data-preparation decision.
+
+    One table row per applied operation so readers can reconcile headline
+    figures against the raw file (totals differ because duplicates were
+    removed, negative rows dropped, gaps filled). Returns '' when nothing
+    changed — the card disappears instead of rendering empty."""
+    steps = (lineage or {}).get("steps")
+    rows: List[str] = []
+    raw_rows: int | None = None
+    final_rows: int | None = None
+    for step in steps if isinstance(steps, list) else []:
+        if not isinstance(step, dict):
+            continue
+        stage = str(step.get("stage") or "?")
+        after = step.get("rows_after")
+        if stage == "raw" and isinstance(after, int):
+            raw_rows = after
+        if isinstance(after, int):
+            final_rows = after
+        for op in step.get("ops") or []:
+            if not isinstance(op, dict):
+                continue
+            name = str(op.get("op", ""))
+            if name in _PASSIVE_OPS:
+                continue
+            affected = op.get("rows_affected")
+            if affected in (None, 0) and not name.startswith("fillna"):
+                continue
+            label = _OP_LABELS.get(name, name.replace("_", " "))
+            rows.append(
+                f"<tr><td>{_esc(stage)}</td>"
+                f"<td>{_esc(label)}</td>"
+                f"<td>{_esc(op.get('column') or '—')}</td>"
+                f"<td class='text-end'>"
+                f"{_esc('—' if affected is None else affected)}</td>"
+                f"<td class='text-secondary small'>"
+                f"{_esc(op.get('detail') or '')}</td></tr>"
+            )
+    if not rows:
+        return ""
+    head = ('<p class="small text-secondary mb-2">All figures in this '
+            'report are computed after these deterministic preparation '
+            'steps')
+    if raw_rows is not None and final_rows is not None \
+            and raw_rows != final_rows:
+        head += (f" — raw file: <strong>{_esc(raw_rows)}</strong> rows, "
+                 f"analysed: <strong>{_esc(final_rows)}</strong> rows")
+    head += ".</p>"
+    body = "\n".join(rows)
+    return (
+        '<div class="card mb-4 shadow-sm">'
+        '<div class="card-header fw-semibold">'
+        'Data Preparation &amp; Cleaning</div>'
+        f'<div class="card-body">{head}'
+        '<div class="table-responsive"><table '
+        'class="table table-sm table-hover align-middle mb-0">'
+        '<thead><tr><th>Stage</th><th>Action</th><th>Column</th>'
+        '<th class="text-end">Rows affected</th>'
+        '<th>Detail</th></tr></thead>'
+        f'<tbody>{body}</tbody></table></div></div></div>'
+    )
+
+
 def render_overview(profile: Dict[str, Any],
                     understanding: Dict[str, Any]) -> str:
     """Render data overview (rows, columns, roles, domain)."""
@@ -825,6 +1042,18 @@ def _build_context(run_dir: Path, exec_summary: str,
     arts = load_artifacts(run_dir)
     ctx = arts["business_context"]
 
+    # KPI cards with variance context: load the analysis-ready frame when
+    # it exists (best-effort — cards render without context otherwise).
+    analysis_df: pd.DataFrame | None = None
+    for candidate in (run_dir / "data" / "processed" / "analysis_ready.csv",
+                      run_dir / "data" / "processed" / "cleaned_data.csv"):
+        if candidate.is_file():
+            try:
+                analysis_df = pd.read_csv(candidate, encoding="utf-8-sig")
+            except Exception:  # noqa: BLE001 -- context is best-effort
+                analysis_df = None
+            break
+
     # --- Bug fix 0a: wrap exec summary in the exec-panel card ---
     if exec_summary.strip():
         exec_summary_html = (
@@ -856,14 +1085,16 @@ def _build_context(run_dir: Path, exec_summary: str,
         "exec_summary": exec_summary,
         "exec_summary_html": exec_summary_html,
         "locale": locale,
-        "report_title": _esc(report_title),
-        "report_subtitle": _esc(ctx.get("report_subtitle", "")),
-        "prepared_for": _esc(prepared_for),
-        "report_date": _esc(report_date),
-        "kpis_html": render_kpis(arts["kpis"]),
+        "report_title": report_title,
+        "report_subtitle": ctx.get("report_subtitle", ""),
+        "prepared_for": prepared_for,
+        "report_date": report_date,
+        "kpis_html": render_kpis(arts["kpis"], df=analysis_df,
+                                     understanding=arts["understanding"]),
         "stats_html": render_stats(arts["stats"]),
         "charts_html": render_charts(arts["charts"], run_dir,
                                      arts["kpis"]),
+        "chart_quality_html": render_chart_quality(run_dir),
         "insights_html": render_insights(arts["insights"]),
         "recommendations_html": render_recommendations(
             arts["recommendations"]),
@@ -871,6 +1102,8 @@ def _build_context(run_dir: Path, exec_summary: str,
         "business_context_html": render_business_context(
             arts["business_context"]),
         "dq_summary_html": render_dq_summary(arts["dq_report"]),
+        "cleaning_html": render_cleaning(arts.get("lineage", {}),
+                                         arts["cleaning_result"]),
         "overview_html": render_overview(arts["data_profile"],
                                          arts["understanding"]),
         "limitations_html": render_limitations(arts["understanding"],

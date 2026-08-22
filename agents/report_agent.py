@@ -12,6 +12,7 @@ import argparse
 import json
 import sys
 import time
+from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -29,7 +30,7 @@ from shared.utils import init_run_layout, load_config
 STAGE = "report"
 
 _SECTIONS = [
-    "executive_summary", "kpis", "stats", "charts",
+    "executive_summary", "cleaning", "kpis", "stats", "charts",
     "insights", "recommendations", "evidence",
 ]
 
@@ -60,6 +61,115 @@ def build_report_task(agent: Any, run_dir: str | Path) -> Any:
     from crewai import Task
 
     arts = load_artifacts(Path(run_dir))
+    digest = _build_digest(arts, Path(run_dir))
+    return Task(
+        description=(
+            "You are writing ONLY the executive summary for a business report. "
+            "All other sections are rendered deterministically by Python.\n\n"
+            "Here is a digest of the run data:\n"
+            f"{json.dumps(digest, ensure_ascii=False, indent=2)}\n\n"
+            "Write a 3-5 sentence executive summary that:\n"
+            "1. States the headline KPI and its direction (+/- %)\n"
+            "2. Names the top 1-2 drivers or findings\n"
+            "3. Flags the single biggest risk or data quality issue\n"
+            "4. Ends with one actionable next step\n\n"
+            "Hard rules:\n"
+            "- never invent numbers not in the digest above\n"
+            "- never claim the data has no dates/timestamps when "
+            "digest.temporal.has_temporal_data is true\n"
+            "- when growth KPIs are missing, give only the digest's "
+            "'growth_note' reason\n"
+            "- never write more than 5 sentences\n"
+            "- return ONLY the plain text summary, no markdown, no JSON\n"
+            + data_note()
+        ),
+        agent=agent,
+        expected_output="3-5 sentence plain-text executive summary",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Digest helpers — dataset facts that anchor the LLM to reality
+# ---------------------------------------------------------------------------
+
+
+def _temporal_span(run_dir: Path, column: str) -> Optional[Dict[str, str]]:
+    """Best-effort min/max date span of *column* in the analysis data."""
+    try:
+        import pandas as pd
+    except ImportError:  # pragma: no cover - pandas is a hard dependency
+        return None
+    for candidate in (run_dir / "data" / "processed" / "analysis_ready.csv",
+                      run_dir / "data" / "processed" / "cleaned_data.csv"):
+        if not candidate.is_file():
+            continue
+        try:
+            df = pd.read_csv(candidate, encoding="utf-8-sig")
+        except Exception:  # noqa: BLE001 - best-effort context only
+            continue
+        if column not in df.columns:
+            continue
+        parsed = pd.to_datetime(df[column], errors="coerce").dropna()
+        if len(parsed):
+            return {"column": column,
+                    "min": str(parsed.min().date()),
+                    "max": str(parsed.max().date())}
+    return None
+
+
+def _temporal_columns(arts: Dict[str, Any]) -> List[str]:
+    """Temporal column names from dataset_understanding (both shapes)."""
+    understanding = arts.get("understanding", {}) or {}
+    cols = [c for c in (understanding.get("temporal_columns") or []) if c]
+    if not cols:
+        cols = [c.get("name") for c in understanding.get("columns", [])
+                if isinstance(c, dict) and c.get("role") == "temporal"
+                and c.get("name")]
+    return [str(c) for c in cols]
+
+
+def _growth_note(arts: Dict[str, Any], run_dir: Path) -> str:
+    """Deterministic reason why growth KPIs are null ('' when none).
+
+    Gives the LLM the true explanation (e.g. single-month span) so it can
+    never invent 'lack of time-stamped data' claims again."""
+    kpis = arts.get("kpis", [])
+    null_growth = [
+        str(k.get("kpi_id") or k.get("name") or "?") for k in kpis
+        if isinstance(k, dict)
+        and str((k.get("operation") or {}).get("function", "")) == "growth"
+        and k.get("value") is None
+    ]
+    if not null_growth:
+        return ""
+    temporal = _temporal_columns(arts)
+    ids = ", ".join(null_growth)
+    if not temporal:
+        return (f"Growth KPIs ({ids}) are unavailable because no "
+                "time-stamped column was detected in the dataset.")
+    span = _temporal_span(run_dir, temporal[0])
+    if span is None:
+        return (f"Growth KPIs ({ids}) are unavailable because column "
+                f"'{temporal[0]}' could not be parsed as dates.")
+    d_min = date.fromisoformat(span["min"])
+    d_max = date.fromisoformat(span["max"])
+    months = (d_max.year - d_min.year) * 12 + d_max.month - d_min.month + 1
+    window = f"{span['min']} to {span['max']}"
+    if months < 2:
+        return (f"Growth KPIs ({ids}) are null because '{temporal[0]}' "
+                f"covers a single period ({window}); period-over-period "
+                "growth requires at least two periods.")
+    return (f"Growth KPIs ({ids}) returned no comparable values across "
+            f"{window}.")
+
+
+def _build_digest(arts: Dict[str, Any], run_dir: Path) -> Dict[str, Any]:
+    """Digest of run artifacts for the LLM executive-summary prompt.
+
+    Adds dataset facts (temporal columns + growth reason) that block
+    hallucinated claims such as 'no time-stamped data'."""
+    understanding = arts.get("understanding", {}) or {}
+    temporal_cols = _temporal_columns(arts)
     digest = {
         "kpis": arts.get("kpis", []),
         "stats_count": len(arts.get("stats", [])),
@@ -74,27 +184,16 @@ def build_report_task(agent: Any, run_dir: str | Path) -> Any:
                 .get("summary", {}).get("fail_count", 0),
         },
         "business_context": arts.get("business_context", {}),
+        "temporal": {
+            "has_temporal_data": bool(
+                understanding.get("has_temporal_data")) or bool(temporal_cols),
+            "temporal_columns": temporal_cols,
+        },
     }
-    return Task(
-        description=(
-            "You are writing ONLY the executive summary for a business report. "
-            "All other sections are rendered deterministically by Python.\n\n"
-            "Here is a digest of the run data:\n"
-            f"{json.dumps(digest, ensure_ascii=False, indent=2)}\n\n"
-            "Write a 3-5 sentence executive summary that:\n"
-            "1. States the headline KPI and its direction (+/- %)\n"
-            "2. Names the top 1-2 drivers or findings\n"
-            "3. Flags the single biggest risk or data quality issue\n"
-            "4. Ends with one actionable next step\n\n"
-            "Hard rules:\n"
-            "- never invent numbers not in the digest above\n"
-            "- never write more than 5 sentences\n"
-            "- return ONLY the plain text summary, no markdown, no JSON\n"
-            + data_note()
-        ),
-        agent=agent,
-        expected_output="3-5 sentence plain-text executive summary",
-    )
+    note = _growth_note(arts, run_dir)
+    if note:
+        digest["growth_note"] = note
+    return digest
 
 
 # ---------------------------------------------------------------------------
@@ -113,26 +212,14 @@ def _generate_exec_summary(run_dir: Path, cfg: Dict[str, Any],
     from shared.llm import complete_text
 
     arts = load_artifacts(run_dir)
-    digest = {
-        "kpis": arts.get("kpis", []),
-        "stats_count": len(arts.get("stats", [])),
-        "chart_count": len(arts.get("charts", [])),
-        "insight_count": len(arts.get("insights", [])),
-        "recommendation_count": len(arts.get("recommendations", [])),
-        "evidence_count": len(arts.get("evidence", [])),
-        "dq_summary": {
-            "total_rules": arts.get("dq_report", {})
-                .get("summary", {}).get("total_rules", 0),
-            "fail_count": arts.get("dq_report", {})
-                .get("summary", {}).get("fail_count", 0),
-        },
-        "business_context": arts.get("business_context", {}),
-    }
+    digest = _build_digest(arts, run_dir)
     system = (
         "You write ONLY 3-5 sentence executive summaries for business "
         "reports. Every number you mention must already exist in the digest "
         "given by the user. Never invent figures, dates or percentages. "
-        "Never mention instructions, tools, or prompts in the summary."
+        "Never mention instructions, tools, or prompts in the summary. "
+        "If the digest includes a 'growth_note', that is the true reason "
+        "any growth figure is absent."
     )
     user = (
         "Here is a digest of the run data:\n"
@@ -178,6 +265,9 @@ def _deterministic_exec_summary(digest: Dict[str, Any]) -> str:
             "report.")
     else:
         parts.append("No data-quality rules failed in this run.")
+    note = digest.get("growth_note")
+    if note:
+        parts.append(str(note))
     parts.append(
         "Recommend reviewing the full report for evidence-backed next steps.")
     return " ".join(parts)

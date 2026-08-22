@@ -20,10 +20,10 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import pandas as pd
 from crewai import Agent, Crew, Process, Task
 
 from analysis.chart_planner import plan_charts
+from analysis.chart_quality import run_quality_gate
 from analysis.chart_renderer import render_all
 from analysis.dsl_executor import execute_plan
 from analysis.evidence import EvidenceRegistry
@@ -175,9 +175,10 @@ def run_analysis(run_dir: str | Path,
 
 def _run_deterministic(run_dir: Path, cfg: Dict[str, Any],
                        log: RunLogger) -> Dict[str, Any]:
-    kpis, stats, charts, truncated, evidence_count = _compute(run_dir, cfg, log)
+    (kpis, stats, charts, truncated, evidence_count,
+     read_mode, rows) = _compute(run_dir, cfg, log)
     return _summary(run_dir, kpis, stats, charts, truncated, evidence_count,
-                    errors=[])
+                    errors=[], read_mode=read_mode, rows=rows)
 
 
 def _run_crew(run_dir: Path, cfg: Dict[str, Any],
@@ -195,9 +196,10 @@ def _run_crew(run_dir: Path, cfg: Dict[str, Any],
     for warning in warnings:
         log.fallback(STAGE, warning)
 
-    kpis, stats, charts, truncated, evidence_count = _compute(run_dir, cfg, log)
+    (kpis, stats, charts, truncated, evidence_count,
+     read_mode, rows) = _compute(run_dir, cfg, log)
     return _summary(run_dir, kpis, stats, charts, truncated, evidence_count,
-                    errors=warnings)
+                    errors=warnings, read_mode=read_mode, rows=rows)
 
 
 def _finalize_analysis(run_dir: Path, result, cfg: Dict[str, Any],
@@ -237,7 +239,11 @@ def _compute(run_dir: Path, cfg: Dict[str, Any],
     if cleaned is None:
         raise RuntimeError(
             "No cleaned_data.csv under data/processed/ - run Stage 4 first.")
-    df = pd.read_csv(cleaned, encoding="utf-8-sig")
+    from shared.core.io_utils import is_large, read_dataframe
+    df = read_dataframe(cleaned)
+    read_mode = "parquet_cache" if is_large(cleaned) and \
+        Path(cleaned).with_suffix(".csv.parquet").is_file() \
+        else ("large_csv" if is_large(cleaned) else "csv")
     limits = cfg.get("limits") or {}
     max_chart_count = int(limits.get("max_chart_count", 20) or 20)
 
@@ -275,8 +281,16 @@ def _compute(run_dir: Path, cfg: Dict[str, Any],
                   time.monotonic() - t0,
                   note=f"{len(charts)} svg files")
 
+    t0 = time.monotonic()
+    quality = run_quality_gate(run_dir, charts, df, kpis)
+    log.tool_call(STAGE, "chart_quality_gate_tool", "passed",
+                  time.monotonic() - t0,
+                  note=f"{quality['summary']['passed']} passed / "
+                       f"{quality['summary']['warned']} warned / "
+                       f"{quality['summary']['failed']} failed")
+
     _save_outputs(run_dir, kpis, stats, charts, truncated, registry)
-    return kpis, stats, charts, truncated, len(registry)
+    return kpis, stats, charts, truncated, len(registry), read_mode, len(df)
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +300,8 @@ def _compute(run_dir: Path, cfg: Dict[str, Any],
 def _summary(run_dir: Path, kpis: List[KpiResult],
              stats: List[StatisticalResult], charts: List[ChartMetadata],
              truncated: bool, evidence_count: int,
-             errors: List[str]) -> Dict[str, Any]:
+             errors: List[str],
+             read_mode: str = "csv", rows: int = 0) -> Dict[str, Any]:
     return {
         "stage": STAGE,
         "status": "passed",
@@ -295,11 +310,15 @@ def _summary(run_dir: Path, kpis: List[KpiResult],
         "chart_count": len(charts),
         "charts_truncated": truncated,
         "evidence_count": evidence_count,
+        "data_rows": rows,
+        "read_mode": read_mode,
         "kpis_path": str(run_dir / "outputs" / "kpis.json"),
         "statistical_results_path": str(run_dir / "outputs"
                                         / "statistical_results.json"),
         "chart_metadata_path": str(run_dir / "metadata"
                                    / "chart_metadata.json"),
+        "charts_quality_path": str(run_dir / "metadata"
+                                   / "chart_quality.json"),
         "evidence_registry_path": str(run_dir / "outputs"
                                      / "evidence_registry.json"),
         "errors": errors,
@@ -374,6 +393,9 @@ def _load_plan(run_dir: Path) -> AnalysisPlan:
 
 def _find_cleaned_csv(run_dir: Path) -> Path | None:
     processed = run_dir / "data" / "processed"
+    ready = processed / "analysis_ready.csv"
+    if ready.exists():
+        return ready
     latest = processed / "cleaned_data.csv"
     if latest.exists():
         return latest

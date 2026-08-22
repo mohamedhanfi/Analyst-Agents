@@ -206,7 +206,8 @@ class CleaningResult(BaseModel):
 
 ChartKind = Literal["bar", "barh", "line", "doughnut",
                     "histogram", "scatter", "heatmap",
-                    "area", "boxplot", "stacked_bar", "pie", "lollipop"]
+                    "area", "boxplot", "stacked_bar", "pie", "lollipop",
+                    "pareto", "waterfall"]
 
 
 class KpiResult(BaseModel):
@@ -258,6 +259,8 @@ class ChartMetadata(BaseModel):
     chart_path: str | None = None
     evidence_id: str | None = None
     computed_by: str = "pandas"
+    quality: str | None = None         # quality-gate verdict: pass/warn/fail
+    quality_reason: str | None = None  # why the gate warned/failed
 
 
 class EvidenceSource(BaseModel):

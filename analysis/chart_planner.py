@@ -29,6 +29,10 @@ RULE = {                     # rule-table reference (spec §2.5)
     "rule_7": "rule_7: 2 numeric measures, asked together -> scatter + trend",
     "rule_8": "rule_8: >= 3 numeric measures -> ranked correlation heatmap",
     "rule_9": "rule_9: share / '% of whole', parts ~ 100% -> doughnut",
+    "rule_10": "rule_10: ranked contribution (sum/count over dimension) "
+               "3-15 values -> pareto + cumulative %",
+    "rule_11": "rule_11: growth KPI over time -> waterfall of period "
+               "contributions (variance view)",
 }
 
 CHART_KINDS: Tuple[str, ...] = get_args(ChartKind)
@@ -80,7 +84,7 @@ def _dedupe(candidates: List[ChartMetadata]) -> List[ChartMetadata]:
 def _plan_kpi(df: pd.DataFrame, kpi: KpiCandidate,
               registry: EvidenceRegistry, index: int,
               threshold: int,
-              proposal: Dict[str, str] | None = None) -> Optional[ChartMetadata]:
+              proposal: Dict[str, str] | None = None) -> List[ChartMetadata]:
     op = kpi.operation
     evidence_id = registry.mint()
 
@@ -90,24 +94,36 @@ def _plan_kpi(df: pd.DataFrame, kpi: KpiCandidate,
                                threshold)
         if chart is not None:
             _register(registry, chart)
-        return chart
+            return [chart]
+        return []
 
     function = op.function
 
     if function == "growth":
-        chart = _rule_2_growth(df, kpi, evidence_id, index, threshold)
-    elif function == "correlation":
+        line = _rule_2_growth(df, kpi, evidence_id, index, threshold)
+        charts = [line] if line is not None else []
+        if line is not None:
+            _register(registry, line)
+        # Rule 11: alongside the trend line, a waterfall shows how each
+        # period contributes to the running total (variance view).
+        if len(charts) == 1:
+            waterfall = _rule_11_waterfall(df, kpi, registry,
+                                           index + len(charts), threshold)
+            if waterfall is not None:
+                charts.append(waterfall)
+        return charts
+    if function == "correlation":
         chart = _rule_7_scatter(df, kpi, op.column_a or op.column,
                                 op.column_b, evidence_id, index, threshold)
     elif function in _AGGREGATES and op.group_by:
         chart = _rule_dimension(df, kpi, op.group_by[0], evidence_id, index,
-                                threshold)
+                                threshold, function=function)
     else:
-        return None                     # headline number, no visual shape
+        return []                     # headline number, no visual shape
 
     if chart is not None:
         _register(registry, chart)
-    return chart
+    return [chart] if chart is not None else []
 
 
 def _plan_proposed(df: pd.DataFrame, kpi: KpiCandidate, kind: str,
@@ -189,13 +205,19 @@ def _rule_7_scatter(df: pd.DataFrame, kpi: KpiCandidate, col_a: str,
 
 def _rule_dimension(df: pd.DataFrame, kpi: KpiCandidate, dimension: str,
                     evidence_id: str, index: int,
-                    threshold: int) -> Optional[ChartMetadata]:
+                    threshold: int,
+                    function: str = "sum") -> Optional[ChartMetadata]:
     if dimension not in df.columns:
         return None
     values = df[dimension].dropna().nunique()
     is_share = bool(_SHARE_RE.search(kpi.name or ""))
-
-    if values <= 2 and is_share:
+    # Rule 10: ranked contribution — a sum/count over a dimension with
+    # 3-15 values is a Pareto (sorted bars + cumulative % line) so the
+    # "few items drive most of the total" pattern is explicit.
+    if (function in ("sum", "count", "nunique") and not is_share
+            and 3 <= values <= 15):
+        kind, reason = "pareto", RULE["rule_10"]
+    elif values <= 2 and is_share:
         kind, reason = "doughnut", RULE["rule_9"]
     elif values <= 2:
         kind, reason = "bar", RULE["rule_1"]
@@ -214,6 +236,38 @@ def _rule_dimension(df: pd.DataFrame, kpi: KpiCandidate, dimension: str,
     )
     if _thin(df, threshold):
         return _downgrade_low_n(chart, f"{len(df)} rows < {threshold}")
+    return chart
+
+
+def _rule_11_waterfall(df: pd.DataFrame, kpi: KpiCandidate,
+                       registry: EvidenceRegistry, index: int,
+                       threshold: int) -> Optional[ChartMetadata]:
+    """Period-contribution waterfall for a growth KPI (rule 11).
+
+    Uses the same period series as the trend line — each bar is one
+    period's contribution, floating on the running total, so the final
+    bar tops at the grand total (variance view)."""
+    op = kpi.operation
+    over = op.over_column
+    if not over or over not in df.columns:
+        return None
+    try:
+        series = growth_series(df, op)
+    except (KeyError, ValueError, TypeError):
+        return None
+    if not series or len(series) < 3:
+        return None
+    chart = ChartMetadata(
+        chart_id=f"CH-{index:03d}", kind="waterfall",
+        reason=RULE["rule_11"],
+        columns=[over, op.column or ""],
+        title=f"{kpi.name} by period (contribution)",
+        kpi_id=kpi.kpi_id,
+        evidence_id=registry.mint(),
+    )
+    if _thin(df, threshold):
+        chart = _downgrade_low_n(chart, f"{len(df)} rows < {threshold}")
+    _register(registry, chart)
     return chart
 
 
@@ -319,6 +373,10 @@ def _kind_fits(df: pd.DataFrame, understanding: DatasetUnderstanding,
         return dimension is not None and df[dimension].dropna().nunique() <= 2
     if kind == "stacked_bar":
         return dimension is not None and len(numeric) >= 2
+    if kind == "pareto":
+        return dimension is not None and 3 <= df[dimension].dropna().nunique() <= 15
+    if kind == "waterfall":
+        return over is not None and df[over].nunique() >= 3
     if kind in ("bar", "barh", "lollipop"):
         return dimension is not None
     return False
@@ -362,7 +420,8 @@ def validate_proposed_kinds(df: pd.DataFrame, plan: AnalysisPlan,
 # ---------------------------------------------------------------------------
 
 _STRENGTH = {
-    "line": 100, "scatter": 90, "heatmap": 85, "doughnut": 85,
+    "line": 100, "pareto": 95, "waterfall": 90, "scatter": 90,
+    "heatmap": 85, "doughnut": 85,
     "bar": 80, "barh": 80, "histogram": 60,
 }
 
@@ -522,11 +581,10 @@ def plan_charts(df: pd.DataFrame, plan: AnalysisPlan,
 
     for kpi in plan.candidate_kpis:
         proposal = accepted.get(kpi.kpi_id)
-        chart = _plan_kpi(df, kpi, registry, index + 1, thin_threshold,
-                          proposal=proposal)
-        if chart is not None:
-            candidates.append(chart)
-            index += 1
+        charts = _plan_kpi(df, kpi, registry, index + 1, thin_threshold,
+                           proposal=proposal)
+        candidates.extend(charts)
+        index += len(charts)
 
     charts = _plan_histograms(df, registry, index, measures, thin_threshold)
     candidates.extend(charts)

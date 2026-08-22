@@ -262,9 +262,22 @@ def test_dq_negative_measure_allowed_for_temperature():
 
 def test_dq_mixed_units_warning(traps, traps_understanding):
     df, _ = traps
+    from shared.schemas import ColumnUnderstanding, DatasetUnderstanding
     issues = check_invalid_values(traps_understanding, df)
-    assert any(i.column == "price_tag" and i.detail == "mixed_units"
-               for i in issues)
+    # price_tag holds amount strings, so it is now correctly a MEASURE —
+    # the 2.4 mixed_units warning applies to amount strings that slipped
+    # into a NON-measure column, not to measures.
+    assert not any(i.column == "price_tag" and i.detail == "mixed_units"
+                   for i in issues)
+    df2 = df.copy()
+    df2["note"] = (["$100", "EGP 500", "50 EUR", "200", "$80"] * 7)[:len(df)]
+    u2 = DatasetUnderstanding(
+        detected_domain="generic", domain_confidence=0.0, columns=[
+            ColumnUnderstanding(name="note", role="free_text", dtype="object",
+                                nunique=5, nullable=False)])
+    issues2 = check_invalid_values(u2, df2)
+    assert any(i.column == "note" and i.detail == "mixed_units"
+               for i in issues2)
 
 
 # ---------------------------------------------------------------------------

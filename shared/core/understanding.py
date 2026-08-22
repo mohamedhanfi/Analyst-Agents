@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Union
 
 from shared.core.semantic_guards import (
+    CONTINUOUS_METRIC_NAME_RE,   # measure-like name signal (§2.2)
     IDENTIFIER_NAME_RE,          # canonical pattern (semantic sweep §0)
     IdentifierSignal,
     is_code_like,
@@ -181,6 +182,26 @@ class ColumnProfiler:
                     and signal.score >= identifier_threshold):
                 role = "identifier"
                 alternates = ["dimension", "free_text"]
+            # Amount-like strings ("$1,200", "EGP 2500", "12%") are measures
+            # even though they are not numeric yet — normalize later in the
+            # cleaning stage. Also rescues all-unique amount columns that the
+            # all-unique heuristic would otherwise call identifiers.
+            # Guarded by a measure-like name + code check so phone numbers /
+            # zip codes never become measures.
+            elif (not _is_numeric(dtype) and not _is_temporal(dtype)
+                    and role in ("free_text", "dimension", "identifier")
+                    and series is not None
+                    and CONTINUOUS_METRIC_NAME_RE.search(name)
+                    and not code_like
+                    and not _looks_like_id(name)):
+                from shared.core.contracts import parse_amount
+                non_null = series.dropna()
+                if len(non_null) >= 5:
+                    parsed = [parse_amount(v) for v in non_null]
+                    amount_ratio = sum(p is not None for p in parsed) / len(non_null)
+                    if amount_ratio >= 0.95:
+                        role = "measure"
+                        alternates = ["dimension"]
             facts.append(ColumnFacts(
                 name=name, dtype=dtype, nunique=nunique,
                 nullable=nullable, suggested_role=role,

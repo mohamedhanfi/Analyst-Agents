@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -349,6 +350,106 @@ def check_semantic_relevance(run_dir: Path) -> List[QaCheck]:
 
 
 # ---------------------------------------------------------------------------
+# Narrative consistency — text claims vs dataset facts (§2.8 gap fix)
+# ---------------------------------------------------------------------------
+
+# Catches invented claims like "lack of time-stamped data" when temporal
+# columns exist. The gap between the negation and the temporal word may not
+# contain "missing"/"gap(s)", so honest sentences ("no missing dates")
+# never match. Hyphens include Unicode variants (U+2010–U+2015) because
+# LLMs sometimes emit non-breaking hyphens ("time‐stamped").
+_TEMPORAL_DENIAL_RE = re.compile(
+    r"\b(?:lack\w*|no|none|without|absent)\b"
+    r"(?:(?!\b(?:missing|gaps?)\b)[^.]){0,60}"
+    r"\b(?:time[\u2010-\u2015 -]?stamp(?:ed)?|timestamps?|dates?"
+    r"|date\s+columns?|temporal\s+(?:data|columns?))\b",
+    re.IGNORECASE)
+_NEGATION_RE = re.compile(r"\b(?:no|none|zero|not)\b", re.IGNORECASE)
+_REMOVAL_VERB_RE = re.compile(
+    r"\b(?:remov\w+|dropp\w+|delet\w+|exclud\w+)\b", re.IGNORECASE)
+
+
+def _cleaning_removed_rows(cleaning: Dict[str, Any],
+                           lineage: Dict[str, Any]) -> int:
+    """Rows removed by preparation steps (dedup/drop_*); lineage first."""
+    total = 0
+    steps = (lineage or {}).get("steps")
+    for step in steps if isinstance(steps, list) else []:
+        if not isinstance(step, dict):
+            continue
+        for op in step.get("ops") or []:
+            if not isinstance(op, dict):
+                continue
+            if str(op.get("op", "")) in ("dedup", "drop_negative",
+                                         "drop_missing", "drop_outlier"):
+                try:
+                    total += int(op.get("rows_affected") or 0)
+                except (TypeError, ValueError):
+                    continue
+    if total:
+        return total
+    if not isinstance(cleaning, dict):
+        return 0
+    try:
+        before = int(cleaning.get("rows_before"))
+        after = int(cleaning.get("rows_after"))
+    except (TypeError, ValueError):
+        return 0
+    return max(0, before - after)
+
+
+def check_report_consistency(run_dir: Path) -> List[QaCheck]:
+    """Cross-check narrative text against dataset facts.
+
+    Numeric QA cannot catch LLM-invented claims such as 'lack of
+    time-stamped data' while a date column exists, or 'no rows were
+    removed' while preparation dropped rows. These deterministic checks
+    flag such contradictions at warning level."""
+    checks: List[QaCheck] = []
+    text = ""
+    summary_path = run_dir / "outputs" / "exec_summary.txt"
+    if summary_path.is_file():
+        try:
+            text = summary_path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+    if not text.strip():
+        return checks
+
+    # 1. Temporal denial vs actual temporal columns
+    understanding = _load_json(run_dir / "metadata"
+                               / "dataset_understanding.json")
+    temporal_cols = [c for c in (understanding.get("temporal_columns")
+                                 or []) if c]
+    has_temporal = bool(understanding.get("has_temporal_data")) \
+        or bool(temporal_cols)
+    if has_temporal and _TEMPORAL_DENIAL_RE.search(text):
+        checks.append(QaCheck(
+            check="exec_summary_temporal_contradiction",
+            severity="warning",
+            message=("executive summary denies time-stamped data but the "
+                     "dataset has temporal column(s): "
+                     + (", ".join(str(c) for c in temporal_cols)
+                        or "detected"))))
+
+    # 2. "Nothing was removed" claims vs rows actually dropped
+    suspect = next((s for s in re.split(r"(?<=[.!?])\s+", text)
+                    if _NEGATION_RE.search(s) and _REMOVAL_VERB_RE.search(s)
+                    and not re.search(r"\d", s)), None)
+    if suspect:
+        removed = _cleaning_removed_rows(
+            _load_json(run_dir / "metadata" / "cleaning_result.json"),
+            _load_json(run_dir / "metadata" / "lineage.json"))
+        if removed > 0:
+            checks.append(QaCheck(
+                check="exec_summary_cleaning_contradiction",
+                severity="warning",
+                message=("executive summary claims no data was removed but "
+                         f"preparation dropped {removed} row(s)")))
+    return checks
+
+
+# ---------------------------------------------------------------------------
 # Full QA recomputation + validation
 # ---------------------------------------------------------------------------
 
@@ -374,6 +475,9 @@ def run_all_checks(run_dir: Path) -> List[QaCheck]:
 
     # 3. Semantic relevance hard-fail (8.1)
     checks.extend(check_semantic_relevance(run_dir))
+
+    # 4. Narrative consistency vs dataset facts
+    checks.extend(check_report_consistency(run_dir))
 
     return checks
 

@@ -78,6 +78,8 @@
   [data-theme="dark"] .metric .val{color:#d7e0f0;}
   .metric .chg{font-size:.88rem;}
   .metric .note{font-size:.76rem; color:var(--muted-2);}
+  .metric .delta{font-size:.88rem;}
+  .delta.green{color:#1b7f43;} .delta.red{color:#b3261e;} .delta.muted{color:var(--muted-2);}
   .text-up{color:var(--gold-dark) !important;} .text-down{color:#b3261e !important;}
   /* ---------- Lang / theme toggles ---------- */
   .lang-toggle{display:inline-flex; border:1px solid var(--line); border-radius:999px; overflow:hidden;}
@@ -120,6 +122,8 @@
   @media print{.card, .metric, .navbar, [data-theme="dark"] body{color-adjust:exact;} }
   figure{margin:0; text-align:center;}
   figcaption{font-size:.76rem; color:var(--muted-2); margin-top:.5rem; font-style:italic;}
+  details.chart-drilldown{text-align:left;}
+  html[lang="ar"] details.chart-drilldown{text-align:right;}
   /* ---------- Tables ---------- */
   .table{--bs-table-bg:var(--card-bg); --bs-table-color:var(--ink); --bs-table-border-color:var(--line);}
   .table thead th{background:transparent; font-size:.72rem; text-transform:uppercase; letter-spacing:.07em; color:var(--muted-2); border-bottom-width:2px;}
@@ -183,14 +187,15 @@
         <div class="sub">{{ report_subtitle|default('') }}</div>
       </div>
       <div class="d-flex gap-2 mt-2">
-        <button class="btn-print" onclick="window.print()">Save as PDF</button>
+        <button class="btn-print" onclick="downloadCSV()"><span data-i18n="btn_csv">Download CSV</span></button>
+        <button class="btn-print" onclick="window.print()"><span data-i18n="btn_pdf">Save as PDF</span></button>
       </div>
     </div>
     <div class="meta">
-      <div><b>Prepared for</b>{{ prepared_for|default('Executive Team') }}</div>
-      <div><b>Date</b>{{ report_date|default('') }}</div>
-      <div><b>Run ID</b>{{ run_id|default('') }}</div>
-      <div><b>Locale</b>{{ locale|default('en') }}</div>
+      <div><b data-i18n="m_prep">Prepared for</b>{{ prepared_for|default('Executive Team') }}</div>
+      <div><b data-i18n="m_date">Date</b>{{ report_date|default('') }}</div>
+      <div><b data-i18n="m_run">Run ID</b>{{ run_id|default('') }}</div>
+      <div><b data-i18n="m_loc">Locale</b>{{ locale|default('en') }}</div>
     </div>
   </div>
 </header>
@@ -204,15 +209,23 @@
     </button>
     <div class="collapse navbar-collapse" id="navMain">
       <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-        <li class="nav-item"><a class="nav-link" href="#s1">Executive Summary</a></li>
-        <li class="nav-item"><a class="nav-link" href="#s2">Key Figures</a></li>
-        <li class="nav-item"><a class="nav-link" href="#s3">Charts</a></li>
-        <li class="nav-item"><a class="nav-link" href="#s4">Findings</a></li>
-        <li class="nav-item"><a class="nav-link" href="#s5">Recommendations</a></li>
-        <li class="nav-item"><a class="nav-link" href="#s6">Evidence</a></li>
+        <li class="nav-item"><a class="nav-link" href="#s1" data-i18n="nav1">Executive Summary</a></li>
+        <li class="nav-item"><a class="nav-link" href="#s2" data-i18n="nav2">Key Figures</a></li>
+        <li class="nav-item"><a class="nav-link" href="#s3" data-i18n="nav3">Performance</a></li>
+        <li class="nav-item"><a class="nav-link" href="#s4" data-i18n="nav4">Findings</a></li>
+        <li class="nav-item"><a class="nav-link" href="#s5" data-i18n="nav5">Recommendations</a></li>
+        <li class="nav-item"><a class="nav-link" href="#s6" data-i18n="nav6">Evidence</a></li>
       </ul>
       <div class="d-flex align-items-center gap-2 ms-auto">
-        <span class="navbar-text small fw-bold" style="color:var(--navy2);">Run: {{ run_id|default('—') }}</span>
+        <span class="navbar-text small fw-bold" style="color:var(--navy2);"><span data-i18n="nav_run">Run</span>: <span id="runid">{{ run_id|default('—') }}</span></span>
+        <div class="lang-toggle" role="group" aria-label="Language">
+          <button type="button" class="active" data-lang="en" onclick="setLang('en')">EN</button>
+          <button type="button" data-lang="ar" onclick="setLang('ar')">عربي</button>
+        </div>
+        <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark mode" title="Toggle dark mode">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        </button>
       </div>
     </div>
   </div>
@@ -221,44 +234,70 @@
 <main>
 <div class="container">
 
+  <!-- ===== TOC ===== -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-body">
+      <h6 class="card-title mb-3" style="font-size:.78rem; letter-spacing:.12em; text-transform:uppercase;" data-i18n="toc_t">Contents</h6>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <a href="#s1" class="list-group-item-action d-block py-1 px-2 rounded text-decoration-none text-start border-0 bg-transparent" data-i18n="toc1">01 · Executive Summary</a>
+          <a href="#s2" class="list-group-item-action d-block py-1 px-2 rounded text-decoration-none text-start border-0 bg-transparent" data-i18n="toc2">02 · Key Figures</a>
+        </div>
+        <div class="col-md-4">
+          <a href="#s3" class="list-group-item-action d-block py-1 px-2 rounded text-decoration-none text-start border-0 bg-transparent" data-i18n="toc3">03 · Performance Overview</a>
+          <a href="#s4" class="list-group-item-action d-block py-1 px-2 rounded text-decoration-none text-start border-0 bg-transparent" data-i18n="toc4">04 · Findings</a>
+        </div>
+        <div class="col-md-4">
+          <a href="#s5" class="list-group-item-action d-block py-1 px-2 rounded text-decoration-none text-start border-0 bg-transparent" data-i18n="toc5">05 · Recommendations</a>
+          <a href="#s6" class="list-group-item-action d-block py-1 px-2 rounded text-decoration-none text-start border-0 bg-transparent" data-i18n="toc6">06 · Evidence</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== 1 EXEC SUMMARY ===== -->
   <div class="section-rule"></div>
-  <div class="sec-head mt-4 mb-3" id="s1" data-num="01"><h2 class="mb-0">Executive Summary</h2></div>
+  <div class="sec-head mt-4 mb-3" id="s1" data-num="01"><h2 class="mb-0" data-i18n="s1_h">Executive Summary</h2></div>
   {{ exec_summary_html|safe }}
+  {{ cleaning_html|safe }}
 
   <!-- ===== 2 KEY FIGURES ===== -->
-  <div class="sec-head mt-5 mb-1" id="s2" data-num="02"><h2 class="mb-0">Key Figures</h2></div>
+  <div class="sec-head mt-5 mb-1" id="s2" data-num="02"><h2 class="mb-0" data-i18n="s2_h">Key Figures</h2></div>
+  <p class="text-secondary mb-4" data-i18n="s2_p">Headline indicators, compared against the prior period.</p>
   {{ kpis_html|safe }}
 
-  <!-- ===== 3 CHARTS ===== -->
-  <div class="sec-head mt-5 mb-1" id="s3" data-num="03"><h2 class="mb-0">Performance Overview</h2></div>
+  <!-- ===== 3 PERFORMANCE / CHARTS ===== -->
+  <div class="sec-head mt-5 mb-1" id="s3" data-num="03"><h2 class="mb-0" data-i18n="s3_h">Performance Overview</h2></div>
+  <p class="text-secondary mb-4" data-i18n="s3_p">Charts of the analysis period — hover for exact values, use legends to show or hide series.</p>
+  {{ chart_quality_html|safe }}
   {{ charts_html|safe }}
 
   <!-- ===== 3b VS PREVIOUS RUN (callout, only when a baseline exists) ===== -->
   {% if run_comparison_html %}{{ run_comparison_html|safe }}{% endif %}
 
   <!-- ===== 4 FINDINGS ===== -->
-  <div class="sec-head mt-5 mb-1" id="s4" data-num="04"><h2 class="mb-0">Findings</h2></div>
+  <div class="sec-head mt-5 mb-1" id="s4" data-num="04"><h2 class="mb-0" data-i18n="s4_h">Findings</h2></div>
+  <p class="text-secondary mb-4" data-i18n="s4_p">Interpretations grounded in the figures above.</p>
   {{ insights_html|safe }}
 
   <!-- ===== 5 RECOMMENDATIONS ===== -->
-  <div class="sec-head mt-5 mb-1" id="s5" data-num="05"><h2 class="mb-0">Recommendations</h2></div>
+  <div class="sec-head mt-5 mb-1" id="s5" data-num="05"><h2 class="mb-0" data-i18n="s5_h">Recommendations</h2></div>
+  <p class="text-secondary mb-4" data-i18n="s5_p">Quantified direction for the next review cycle.</p>
   {{ recommendations_html|safe }}
 
   <!-- ===== 6 EVIDENCE ===== -->
-  <div class="sec-head mt-5 mb-1" id="s6" data-num="06"><h2 class="mb-0">Evidence Appendix</h2></div>
+  <div class="sec-head mt-5 mb-1" id="s6" data-num="06"><h2 class="mb-0" data-i18n="s6_h">Evidence Appendix</h2></div>
+  <p class="text-secondary mb-4" data-i18n="s6_p">The record behind every claim in this report.</p>
   {{ evidence_html|safe }}
 
   <!-- ===== SIGNATURE ===== -->
   <div class="row signature">
-    <div class="col-md-4"><div class="lbl">Prepared by</div><div class="sig-line"></div><div class="sig-name">Insight Forge — data automation</div></div>
-    <div class="col-md-4"><div class="lbl">Reviewed by</div><div class="sig-line"></div><div class="sig-name"></div></div>
-    <div class="col-md-4"><div class="lbl">Approved by</div><div class="sig-line"></div><div class="sig-name"></div></div>
+    <div class="col-md-4"><div class="lbl" data-i18n="sig_prep">Prepared by</div><div class="sig-line"></div><div class="sig-name">Insight Forge — data automation</div></div>
+    <div class="col-md-4"><div class="lbl" data-i18n="sig_rev">Reviewed by</div><div class="sig-line"></div><div class="sig-name"></div></div>
+    <div class="col-md-4"><div class="lbl" data-i18n="sig_app">Approved by</div><div class="sig-line"></div><div class="sig-name"></div></div>
   </div>
 
-  <div class="text-center footer mt-4">
-    Insight Forge · Generated automatically · Run {{ run_id|default('—') }}
-  </div>
+  <div class="text-center footer mt-4"><span data-i18n="foot">Insight Forge · Generated automatically</span> · Run {{ run_id|default('—') }}</div>
 
 </div>
 </main>
@@ -274,6 +313,97 @@ Chart.defaults.font.family='-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,A
 Chart.defaults.font.size=12;
 Chart.defaults.color='#5a6472';
 Chart.defaults.animation.duration=500;
+
+const I18N={
+en:{
+  btn_csv:'Download CSV',btn_pdf:'Save as PDF',
+  m_prep:'Prepared for',m_date:'Date',m_run:'Run ID',m_loc:'Locale',
+  nav1:'Executive Summary',nav2:'Key Figures',nav3:'Performance',nav4:'Findings',nav5:'Recommendations',nav6:'Evidence',
+  nav_run:'Run',toc_t:'Contents',
+  toc1:'01 · Executive Summary',toc2:'02 · Key Figures',toc3:'03 · Performance Overview',toc4:'04 · Findings',toc5:'05 · Recommendations',toc6:'06 · Evidence',
+  s1_h:'Executive Summary',s2_h:'Key Figures',s3_h:'Performance Overview',s4_h:'Findings',s5_h:'Recommendations',s6_h:'Evidence Appendix',
+  s2_p:'Headline indicators, compared against the prior period.',
+  s3_p:'Charts of the analysis period — hover for exact values, use legends to show or hide series.',
+  s4_p:'Interpretations grounded in the figures above.',
+  s5_p:'Quantified direction for the next review cycle.',
+  s6_p:'The record behind every claim in this report.',
+  sig_prep:'Prepared by',sig_rev:'Reviewed by',sig_app:'Approved by',
+  foot:'Insight Forge · Generated automatically · Run '
+},
+ar:{
+  btn_csv:'تنزيل CSV',btn_pdf:'حفظ PDF',
+  m_prep:'أُعدّ لـ',m_date:'التاريخ',m_run:'معرف التشغيل',m_loc:'اللغة',
+  nav1:'الملخص التنفيذي',nav2:'الأرقام الأساسية',nav3:'الأداء',nav4:'النتائج',nav5:'التوصيات',nav6:'الأدلة',
+  nav_run:'تشغيل',toc_t:'المحتويات',
+  toc1:'01 · الملخص التنفيذي',toc2:'02 · الأرقام الأساسية',toc3:'03 · نظرة الأداء',toc4:'04 · النتائج',toc5:'05 · التوصيات',toc6:'06 · الأدلة',
+  s1_h:'الملخص التنفيذي',s2_h:'الأرقام الأساسية',s3_h:'نظرة الأداء',s4_h:'النتائج',s5_h:'التوصيات',s6_h:'ملحق الأدلة',
+  s2_p:'مؤشرات رئيسية، مقارنة بالفترة السابقة.',
+  s3_p:'رسوم الفترة قيد التحليل — مرّر فوق الرسم للاطلاع على القيم، واستخدم مفتاح التوضيح لإظهار السلاسل أو إخفائها.',
+  s4_p:'تفسيرات تستند إلى الأرقام أعلاه.',
+  s5_p:'توجيه كمي لدورة المراجعة القادمة.',
+  s6_p:'السجل خلف كل ادعاء في هذا التقرير.',
+  sig_prep:'أُعدّ بواسطة',sig_rev:'رُوجع بواسطة',sig_app:'اعتُمد بواسطة',
+  foot:'إنفورج · توليد تلقائي · تشغيل '
+}
+};
+
+let CUR='en';
+const EN_BS='https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css';
+const AR_BS='https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css';
+
+function t(key){ return (I18N[CUR]&&I18N[CUR][key])||(I18N.en[key]||''); }
+
+function setLang(lang){
+  CUR=(I18N[lang]?lang:'en');
+  const h=document.documentElement;
+  h.setAttribute('lang',CUR);
+  h.setAttribute('dir',CUR==='ar'?'rtl':'ltr');
+  const bs=document.getElementById('bs-css');
+  if(bs) bs.setAttribute('href',CUR==='ar'?AR_BS:EN_BS);
+  Chart.defaults.font.family=(CUR==='ar')?'"Cairo",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif':'-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif';
+  document.querySelectorAll('[data-i18n]').forEach(function(el){
+    const k=el.getAttribute('data-i18n');
+    el.innerHTML=t(k);
+  });
+  const runEl=document.querySelector('#runid');
+  if(runEl) runEl.textContent={{ run_id|default('—')|tojson }};
+  if(typeof window.__rebuildReportCharts==='function'){ window.__rebuildReportCharts(); }
+  document.querySelectorAll('[data-lang]').forEach(function(b){
+    b.classList.toggle('active',b.getAttribute('data-lang')===CUR);
+  });
+  try{ localStorage.setItem('if_lang',CUR); }catch(e){}
+}
+
+function toggleTheme(){
+  const h=document.documentElement;
+  const next=(h.getAttribute('data-theme')==='dark')?'light':'dark';
+  h.setAttribute('data-theme',next);
+  try{ localStorage.setItem('if_theme',next); }catch(e){}
+  if(typeof window.__rebuildReportCharts==='function'){ window.__rebuildReportCharts(); }
+}
+
+function downloadCSV(){
+  const tables=document.querySelectorAll('table.table');
+  if(!tables.length) return;
+  const parts=[];
+  tables.forEach(function(t,i){
+    const rows=[];
+    t.querySelectorAll('tr').forEach(function(tr){
+      const cells=tr.querySelectorAll('th,td');
+      const line=Array.prototype.map.call(cells,function(c){
+        return '"'+c.textContent.trim().replace(/"/g,'""')+'"';
+      }).join(',');
+      rows.push(line);
+    });
+    if(rows.length) parts.push(rows.join('\r\n'));
+  });
+  if(!parts.length) return;
+  const csv=parts.join('\r\n\r\n');
+  const a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+  a.download='insight-forge-report.csv';
+  a.click();
+}
 
 // ===== Back to top =====
 (function(){
@@ -310,12 +440,15 @@ Chart.defaults.animation.duration=500;
   els.forEach(function(el){ io.observe(el); });
 })();
 
-// ===== Init theme from system preference =====
+// ===== Init =====
 (function(){
   try{
     const th=localStorage.getItem('if_theme');
     if(th==='dark'||th==='light') document.documentElement.setAttribute('data-theme',th);
   }catch(e){}
+  let saved={{ locale|default('en')|tojson }};
+  try{ saved=localStorage.getItem('if_lang')||saved; }catch(e){}
+  setLang(saved);
 })();
 </script>
 </body>

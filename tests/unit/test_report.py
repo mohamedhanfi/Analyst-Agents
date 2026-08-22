@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+import pandas as pd
 import pytest
 
 from analysis.report_builder import (
@@ -17,6 +18,7 @@ from analysis.report_builder import (
     load_artifacts,
     render_business_context,
     render_charts,
+    render_cleaning,
     render_dq_summary,
     render_evidence,
     render_insights,
@@ -213,11 +215,46 @@ def test_render_kpis_values() -> None:
     assert '<div class="card metric' in html
 
 
+def test_render_kpis_variance_context() -> None:
+    import pandas as pd
+    kpis = [_kpi("KPI-001", "Revenue", 550.0, "EV-001")]
+    frame = pd.DataFrame({
+        "date": ["2024-01-05", "2024-01-15", "2024-02-05", "2024-02-15"],
+        "revenue": [100.0, 200.0, 250.0, 300.0],
+    })
+    understanding = {
+        "columns": [{"name": "date", "role": "temporal"},
+                    {"name": "revenue", "role": "measure"}],
+    }
+    html = render_kpis(kpis, df=frame, understanding=understanding)
+    # Feb (550) vs Jan (300): +83.3% — the card must carry the delta.
+    assert "83.3%" in html
+    assert "vs 2024-02" in html
+    assert "delta" in html
+
+
 def test_render_kpis_escapes_html() -> None:
     kpis = [_kpi("KPI-001", '<script>alert("xss")</script>', 100, "EV-001")]
     html = render_kpis(kpis)
     assert "<script>" not in html
     assert "&lt;script&gt;" in html
+
+
+def test_render_charts_drilldown_table(tmp_path):
+    from analysis.report_builder import _chart_drilldown
+    chart = {"chart_id": "CH-001", "title": "revenue by product"}
+    cfg = {"type": "bar",
+           "data": {"labels": ["a", "b"],
+                    "datasets": [{"label": "revenue",
+                                  "data": [100.0, 200.0]}]}}
+    frame = pd.DataFrame({"product": ["a", "a", "b"],
+                          "revenue": [60.0, 40.0, 200.0]})
+    html = _chart_drilldown(chart, cfg, frame)
+    assert "<details" in html
+    assert "a" in html and "b" in html
+    assert "100" in html and "200" in html
+    assert "3 source rows" in html          # drill-down context size
+    assert "Drill-down" in html
 
 
 def test_render_stats_table() -> None:
@@ -460,6 +497,51 @@ def test_xss_in_insight_title() -> None:
 # ---------------------------------------------------------------------------
 # Full render (end-to-end)
 # ---------------------------------------------------------------------------
+
+
+def test_render_cleaning_discloses_ops() -> None:
+    lineage = {"steps": [
+        {"stage": "raw", "artifact": "raw.csv", "rows_before": None,
+         "rows_after": 202,
+         "ops": [{"op": "upload", "detail": "source file as provided"}]},
+        {"stage": "repaired", "artifact": "validated.csv",
+         "rows_before": 202, "rows_after": 200,
+         "ops": [{"op": "type_cast", "column": "date",
+                  "detail": "object->datetime64"},
+                 {"op": "dedup", "rows_affected": 2}]},
+        {"stage": "cleaned", "artifact": "cleaned.csv",
+         "rows_before": 200, "rows_after": 198,
+         "ops": [{"op": "parse_datetime", "column": "date",
+                  "rows_affected": 200, "detail": "normalized"},
+                 {"op": "dedup", "rows_affected": 0},
+                 {"op": "drop_negative", "column": "revenue",
+                  "rows_affected": 2}]},
+        {"stage": "analysis_ready", "artifact": "analysis_ready.csv",
+         "rows_before": 198, "rows_after": 198,
+         "ops": [{"op": "freeze", "detail": "identity"}]},
+    ]}
+    html = render_cleaning(lineage, {})
+    assert "Data Preparation" in html
+    assert "duplicate rows removed" in html
+    assert "negative-value rows dropped" in html
+    assert "<strong>202</strong>" in html      # raw rows in headline
+    assert "<strong>198</strong>" in html      # analysed rows in headline
+    assert "revenue" in html
+
+
+def test_render_cleaning_skips_zero_effect_ops() -> None:
+    lineage = {"steps": [
+        {"stage": "cleaned", "artifact": "cleaned.csv",
+         "rows_before": 10, "rows_after": 10,
+         "ops": [{"op": "dedup", "rows_affected": 0},
+                 {"op": "freeze", "detail": "identity"}]},
+    ]}
+    assert render_cleaning(lineage, {}) == ""
+
+
+def test_render_cleaning_empty_when_no_lineage() -> None:
+    assert render_cleaning({}, {}) == ""
+    assert render_cleaning(None, {}) == ""
 
 
 def test_render_report_minimal(tmp_path: Path) -> None:

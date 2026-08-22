@@ -1,6 +1,6 @@
 # Insight Forge — Project Structure
 
-> Quick reference for the `insight-forge/` layout and what lives inside each file, based on `Project_Plan/Analyst-Agents.md` (v4.4).
+> Quick reference for the `insight-forge/` layout and what lives inside each file, based on `Project_Plan/Analyst-Agents.md` (v4.8).
 > Full implementation guide: [`Analyst-Agents.md`](./Analyst-Agents.md)
 
 ---
@@ -26,11 +26,12 @@ insight-forge/
 │   ├── report_agent.py         # stage 7
 │   └── qa_agent.py             # stage 8
 ├── analysis/                   # pure computation, no LLM
-│   ├── chart_planner.py        # 12-kind whitelist + data-shape rule table + validate_proposed_kinds (hybrid LLM proposals)
-│   ├── chart_renderer.py       # hand-rolled SVG renderers (Okabe-Ito, labels, captions) — one per kind
+│   ├── chart_planner.py        # 14-kind whitelist + 11-rule data-shape table + validate_proposed_kinds (hybrid LLM proposals)
+│   ├── chart_quality.py        # stage 5c gate: SVG integrity + KPI aggregation match + DQ confidence labels
+│   ├── chart_renderer.py       # hand-rolled SVG renderers (navy/gold palette, labels, captions) — one per kind
 │   ├── dsl_executor.py         # whitelist DSL ops over ALL rows (filters, group_by, growth, correlation)
 │   ├── evidence.py             # evidence_id minting + registry read/write (the only writer)
-│   ├── report_builder.py       # Jinja2 report rendering: load_artifacts + 9 section renderers + render_report
+│   ├── report_builder.py       # Jinja2 report rendering: load_artifacts + 9 section renderers + Chart.js init (idempotent)
 │   ├── qa_recompute.py         # KPI recomputation from cleaned CSV + reference validation
 │   ├── qa_verdict.py           # score formula (§2.8) + deterministic verdict table
 │   ├── generic/                # descriptive · correlation · distribution · trend · comparison
@@ -44,7 +45,11 @@ insight-forge/
 │   │   ├── business_context.py  # BusinessContextGatherer (dialog + generic mode)
 │   │   ├── understanding.py     # role rules §2.2 + domain facts + DSL plan builder
 │   │   ├── data_quality.py      # §2.3 checks + deterministic repair (stage 3 core)
-│   │   └── cleaning.py          # §2.4 strategy table + execution (stage 4 core)
+│   │   ├── cleaning.py          # §2.4 strategy table + execution (stage 4 core)
+│   │   ├── contracts.py         # §3b column contracts + normalization layer (currency/percent/dates/units/categories)
+│   │   ├── deep_profile.py      # sentinel-aware missingness + MAD-modified z-score outliers + impact analysis
+│   │   ├── lineage.py           # raw→validated→repaired→cleaned→analysis_ready chain (sha256 + rows + ops)
+│   │   └── io_utils.py          # large-data I/O: Parquet cache >200MB + chunked column stats + row estimation
 │   ├── tools/                   # CrewAI @tool wrappers, aggregated in __init__.py
 │   │   ├── file_io.py           # file_validator_tool · file_reader_tool · file_sheet_extract_tool
 │   │   ├── profiling.py         # pii_detector_tool · data_profiler_tool
@@ -61,7 +66,7 @@ insight-forge/
 │   ├── logger.py                # structured logs to runs/<run_id>/logs/ — latency/tokens/cost + tool calls + retries
 │   └── utils.py                 # config load (config.yaml + env) + run_id allocator
 ├── resources/                  # read-only static assets
-│   ├── report_template.html    # HTML report template
+│   ├── report_template.html    # redesigned HTML report template (masthead · EN/AR + RTL · light/dark · TOC · KPI count-up · Chart.js + SVG fallback · downloadCSV)
 │   └── business_context/       # static business-context templates
 ├── runs/                       # run isolation — the only writable surface per run
 │   └── <run_id>/               # data/ · knowledge/ · metadata/ · outputs/ · logs/ · master_manifest.json
@@ -78,7 +83,7 @@ insight-forge/
 | `main.py` | Entry point — loads `config.yaml`, builds the Crew, runs the Flow, allocates `run_id` (via `shared/utils.py`) | `python main.py <file>` |
 | `config.yaml` | Single config: per-agent role/goal/backstory/model, hard limits (§1), retention (§5), review_required (§2.6) | `shared/utils.py` |
 | `.env.example` | Sample API keys — copy to `.env` (the live one, gitignored) | `shared/utils.py` |
-| `pyproject.toml` | Deps: crewai + pandas, numpy, scipy, statsmodels, matplotlib, seaborn, openpyxl, jinja2, weasyprint, babel | pip |
+| `pyproject.toml` | Deps: crewai + pandas, numpy, scipy, openpyxl, jinja2, pyyaml, python-dotenv | pip |
 
 ---
 
@@ -99,9 +104,9 @@ insight-forge/
 | `understanding_agent.py` | 2 — Understanding**+ planning (2nd Task of the same Agent)** | Python: `nunique/head/kinds` + role rules. LLM: review roles (e.g. numeric `zip_code`→identifier), detect domain/entities, propose DSL KPIs | `classify_column_roles` · `detect_domain_and_entities` · `build_analysis_plan` | `column_profiler_tool` · `domain_classifier_tool` · `dsl_plan_builder_tool` (validated against `shared/dsl_validator.py` whitelist) | `metadata/understanding.json` · `metadata/analysis_plan.json` |
 | `data_quality.py` | 3 — Engine only, **no LLM** | Deterministic: schema, invalid values, missingness MCAR/MAR/MNAR, duplicates, referential integrity, business rules, units/encoding | plain functions invoked by `flows.py` (no CrewAI Task) | `schema_checker_tool` · `invalid_value_checker_tool` · `missingness_analyzer_tool` · `duplicate_detector_tool` · `referential_integrity_tool` · `deterministic_repair_tool` | `metadata/data_quality_report.json` |
 | `cleaning_agent.py` | 4 — Cleaning | LLM: strategy decision (JSON). Python: fillna, `*_missing_flag`, type cast, dedup, IQR, logging + DQ re-check | `decide_cleaning_strategy` · `execute_cleaning` · `recheck_data_quality` (max 3) | `cleaning_strategy_tool` · `fillna_tool` · `flag_column_tool` · `type_caster_tool` · `dedup_tool` · `iqr_outlier_tool` · `dq_recheck_tool` | `data/processed/cleaned_data.csv` (+`cleaned_data_attempt_<n>.csv`) · `metadata/cleaning_result.json` |
-| `analysis.py` | 5 — Analysis (5a compute + 5b charts, one agent) | LLM: KPI selection, interpretation, chart re-rank, **chart-kind proposals** (`proposed_kinds`). Python: DSL execution, stats suite, **kind validation + rule-table fallback**, SVG drawing, evidence registry | `select_kpis` · `run_dsl_and_stats` · `rank_chart_candidates` | `dsl_executor_tool` (whitelist via `shared/dsl_validator.py`) · `statistical_suite_tool` · `chart_planner_tool` (+ `validate_proposed_kinds`) · `chart_renderer_tool` (12-kind SVG) · `evidence_registry_tool` | `outputs/kpis.json` · `statistical_results.json` · `charts/*.svg` · `metadata/chart_metadata.json` · `evidence_registry.json` |
+| `analysis.py` | 5 — Analysis (5a compute + 5b charts + 5c quality gate, one agent) | LLM: KPI selection, interpretation, chart re-rank, **chart-kind proposals** (`proposed_kinds`). Python: DSL execution, stats suite, **kind validation + rule-table fallback**, SVG drawing, evidence registry, **chart quality gate** | `select_kpis` · `run_dsl_and_stats` · `rank_chart_candidates` | `dsl_executor_tool` (whitelist via `shared/dsl_validator.py`) · `statistical_suite_tool` · `chart_planner_tool` (+ `validate_proposed_kinds`) · `chart_renderer_tool` (14-kind SVG) · `evidence_registry_tool` · `chart_quality_gate` | `outputs/kpis.json` · `statistical_results.json` · `charts/*.svg` · `metadata/chart_metadata.json` · `metadata/chart_quality.json` · `evidence_registry.json` |
 | `insight_agent.py` | 6 — Insights | LLM-heavy: evidence-grounded insights + hedged recommendations + claim validation | `generate_insights` · `build_recommendations` · `validate_claims` | `evidence_lookup_tool` · `claim_validator_tool` · `human_input_tool` (if `review_required: true`) | `outputs/insights.json` |
-| `report_agent.py` | 7 — Report | Python renders full report from JSONs via template; LLM writes **only** 3–5 sentence executive summary | `render_report` · `write_executive_summary` | `html_renderer_tool` (jinja2 autoescape) · `html_sanitizer_tool` · `locale_formatter_tool` (babel) · `chart_embed_tool` | `<run_id>/report.html` · `metadata/report_result.json` |
+| `report_agent.py` | 7 — Report | Python renders full report from JSONs via redesigned template; LLM writes **only** 3–5 sentence executive summary | `render_report` · `write_executive_summary` | `html_renderer_tool` (jinja2 autoescape) · `html_sanitizer_tool` · `locale_formatter_tool` (shared/formatting.py) · `chart_embed_tool` | `<run_id>/report.html` · `metadata/report_result.json` |
 | `qa_agent.py` | 8 — QA | Python recomputes **100% of KPIs** (tolerance 0.01%), checks refs/charts/HTML. Independent LLM (different model) reviews logic + readability | `recompute_kpis` · `validate_structure` · `review_logic_and_readability` · `compute_verdict` (deterministic, no LLM) | `kpi_recomputation_tool` · `reference_validator_tool` · `score_calculator_tool` · `verdict_tool` | `metadata/qa_verdict.json` (APPROVED / APPROVED_WITH_WARNINGS / NEEDS_REVISION) |
 
 ---
@@ -110,8 +115,9 @@ insight-forge/
 
 | File/Dir | Contents |
 |---|---|
-| `chart_planner.py` | Ordered rule table (§2.5) over a **12-kind whitelist**: dimension/n-point shape → chart kind (`line/bar/barh/donut/histogram/scatter/heatmap` + proposed `area/boxplot/stacked_bar/pie/lollipop`) + `reason` + `reliability` (`low_n` on thin data). `validate_proposed_kinds` accepts LLM proposals that pass whitelist + data-shape feasibility; rejected proposals fall back to the rule table. No fixed menu — rules + validated proposals only. |
-| `chart_renderer.py` | Hand-rolled SVG renderers (no matplotlib) — one pure function per kind; Okabe-Ito palette, value labels / line markers, XML-escaped caption (title + `reliability` + `evidence_id`) for alt text. |
+| `chart_planner.py` | Ordered rule table (§2.5) over a **14-kind whitelist**: dimension/n-point shape → chart kind (`line/bar/barh/donut/histogram/scatter/heatmap` + proposed `area/boxplot/stacked_bar/pie/lollipop` + rule-driven `pareto`/`waterfall`) + `reason` + `reliability` (`low_n` on thin data). `validate_proposed_kinds` accepts LLM proposals that pass whitelist + data-shape feasibility; rejected proposals fall back to the rule table. No fixed menu — rules + validated proposals only. |
+| `chart_quality.py` | Stage 5c per-chart quality gate: SVG integrity (root, no render-error/"no data" while data existed), **aggregation match** (rendered group totals vs KPI within 0.1%), and a DQ-based **confidence label** (missingness/repair/contract violations/outlier flags) → `metadata/chart_quality.json` + `quality`/`quality_reason` stamps on ChartMetadata. |
+| `chart_renderer.py` | Hand-rolled SVG renderers (no matplotlib) — one pure function per kind; **Insight Forge navy/gold palette**, value labels / line markers, XML-escaped caption (title + `reliability` + `evidence_id`) for alt text. |
 | `dsl_executor.py` | Whitelist DSL ops over ALL rows: `sum mean median count nunique min max std growth correlation ratio` + filters/group_by, every value evidence-minted. |
 | `evidence.py` | evidence-ids mint + evidence_registry read/write — **the only writer** of the registry. Every value/chart/insight passes through it. |
 | `generic/` | General computation: `descriptive` · `correlation` (Pearson + p-value + CI + effect) · `distribution` (histograms) · `trend` (rolling/seasonality). |
@@ -123,7 +129,7 @@ insight-forge/
 
 | File | Contents |
 |---|---|
-| `core/` | Pure logic, no CrewAI — every computation/file op (Golden Rule: LLM decides, Python executes). `validation.py` · `reader.py` · `profiler.py` · `pii.py` · `business_context.py`. |
+| `core/` | Pure logic, no CrewAI — every computation/file op (Golden Rule: LLM decides, Python executes). `validation.py` · `reader.py` · `profiler.py` · `pii.py` · `business_context.py` · `understanding.py` · `data_quality.py` · `cleaning.py` · **`contracts.py`** (column contracts + normalization layer — currency/percent/dates/units/categories) · **`deep_profile.py`** (sentinel-aware missingness, MAD outliers, impact analysis) · **`lineage.py`** (raw→validated→repaired→cleaned→analysis_ready with sha256 + rows + ops) · **`io_utils.py`** (Parquet cache >200MB + chunked column stats + row estimation). |
 | `tools/` | All CrewAI `@tool` wrappers — thin adapters over `core/`, aggregated in `__init__.py`. Cell content = **UNTRUSTED** — never passes to the model. `file_io.py` · `profiling.py` · `human.py`. |
 | `schemas.py` | Pydantic models for every JSON artifact (data_profile, dataset_understanding, analysis_plan, cleaning_result, …). |
 | `dsl_validator.py` | DSL whitelist + validator — **dual use**: Understanding builds, Analyst executes. Defines: `sum mean median count nunique min max std growth correlation ratio` + their parameters. |
@@ -136,7 +142,7 @@ insight-forge/
 
 | File/Dir | Contents |
 |---|---|
-| `report_template.html` | Base template for the report (all sections: Summary · Business Context · DQ Summary · Data Overview · KPIs · Stats · Charts · Insights · Recommendations · Limitations · Evidence Appendix), rendered with Jinja `autoescape=True`. |
+| `report_template.html` | Redesigned Jinja2 template (all sections: Summary · Business Context · DQ Summary · Data Overview · KPIs · Stats · Charts · Insights · Recommendations · Limitations · Evidence Appendix): masthead (title/subtitle/prepared-for/date) · sticky navbar with **EN/AR language toggle (RTL)** + **light/dark theme toggle** · numbered TOC · KPI count-up on view · **interactive Chart.js canvases** (navy/gold) with static SVG fallback + drill-down · `downloadCSV` export of every table · signature + footer · back-to-top. Rendered with Jinja `autoescape=True`; `_JS_INIT` is idempotent (`__REPORT_CHART_INSTANCES__` + `__rebuildReportCharts`). |
 | `business_context/` | Static business-context templates (formerly `fixtures/` — renamed from `knowledge/`). Read-only. Per-run context written to `runs/<run_id>/knowledge/business_context.json` (different thing). |
 
 ---
@@ -148,9 +154,9 @@ runs/<run_id>/
 ├── data/
 │   ├── raw/          # uploaded file (retention 7 days)
 │   ├── extracted/    # CSV from stage 1
-│   └── processed/    # cleaned_data.csv (+ cleaned_data_attempt_<n>.csv)
+│   └── processed/    # validated_data.csv (stage 3) · cleaned_data.csv (+ cleaned_data_attempt_<n>.csv) · analysis_ready.csv (frozen, stage 4)
 ├── knowledge/        # business_context.json (stage 1 output, per-run)
-├── metadata/         # data_profile · dataset_understanding · analysis_plan · data_quality_report · cleaning_result · chart_metadata · report_result · qa_verdict
+├── metadata/         # data_profile · dataset_understanding · analysis_plan · data_quality_report · data_contracts · contract_violations · deep_profile · lineage · cleaning_result · impact_cleaning · chart_metadata · chart_quality · report_result · qa_verdict
 ├── outputs/          # report.html · kpis.json · statistical_results.json · insights.json · evidence_registry.json · run_comparison.json · charts/
 ├── logs/             # per-stage LLM/tool logs (retention 90 days)
 └── master_manifest.json  # reproducibility: pipeline_version · git_sha · data_hash · model · temperature · seed · python_version · packages · analysis_mode

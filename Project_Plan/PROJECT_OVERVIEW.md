@@ -27,7 +27,7 @@ The run finishes with a verdict: `APPROVED`, `APPROVED_WITH_WARNINGS`, or
 `NEEDS_REVISION`.
 
 The whole thing is built on **CrewAI** (a framework for "agent" teams) plus
-pandas / scipy / statsmodels / matplotlib, with Pydantic for data contracts.
+pandas / scipy, with Pydantic for data contracts.
 
 ---
 
@@ -63,7 +63,7 @@ Flow: **Upload → 1 Ingestion → 2 Understanding → 3 Data Quality → 4 Clea
 | 2 | **Understanding** | Classifies each column's role (measure / dimension / temporal / identifier…), detects the domain (sales, hr…), builds the analysis plan (a whitelist of safe KPI formulas) | LLM + Python | [DONE] |
 | 3 | **Data Quality** | Deterministic checks: schema, invalid values (negative revenue, impossible dates…), missingness patterns (MCAR/MAR/MNAR), duplicates, referential integrity, business rules | Python only (no LLM) | [DONE] |
 | 4 | **Cleaning** | Fixes the data per strategy: fill median/mode, flag non-random missingness, cast types, drop duplicates / negatives, IQR outliers; re-checks quality (max 3 retries) | LLM (strategy) + Python (execute) | [DONE] |
-| 5 | **Analysis** | **5a – compute:** runs the whitelist KPIs, the statistical suite (descriptive, correlation, distribution, trend, comparison) and picks chart kinds from a data-shape rule table (12-kind whitelist); registers every value as evidence. **5b – draw:** renders the actual `*.svg` charts — the LLM may propose chart kinds with a reason, Python validates them (whitelist + data fit) and falls back to the rule table when rejected | LLM (select/rank/propose) + Python (validate/compute/draw) | [DONE] |
+| 5 | **Analysis** | **5a – compute:** runs the whitelist KPIs, the statistical suite (descriptive, correlation, distribution, trend, comparison) and picks chart kinds from a data-shape rule table (11-rule / 14-kind whitelist); registers every value as evidence. **5b – draw:** renders the actual `*.svg` charts — the LLM may propose chart kinds with a reason, Python validates them (whitelist + data fit) and falls back to the rule table when rejected. **5c – gate:** every chart is checked before it is trusted (SVG integrity, aggregation matches the KPI, DQ confidence label) | LLM (select/rank/propose) + Python (validate/compute/draw/quality-gate) | [DONE] |
 | 6 | **Insights** | Writes evidence-grounded insights and hedged recommendations; validates every claim against the evidence registry | LLM (text) + Python (validate) | [DONE] |
 | 7 | **Report** | Renders the final HTML report (Python, Jinja2 template) and writes only the 3–5 sentence executive summary (LLM) | Python + LLM (summary only) | [DONE] |
 | 8 | **QA** | Recomputes 100% of the KPIs independently, validates structure, scores issues, and issues the final verdict deterministically | Python (authoritative) + LLM (review) | [DONE] |
@@ -96,21 +96,38 @@ sum  mean  median  count  nunique  min  max  std  growth  correlation  ratio
 - **Comparison:** t-test + Cohen's d, Mann-Whitney U, ANOVA + eta-squared,
   Kruskal-Wallis + post-hoc, chi-square + Cramér's V.
 
-### The chart planner (stage 5a) + the renderer (stage 5b)
+### The chart planner (stage 5a) + the renderer (stage 5b) + the quality gate (stage 5c)
 
 Python inspects each candidate's data shape and picks a chart kind from an
-ordered 9-rule table (e.g. dates + ≥3 points → line; 2 measures → scatter;
-≥3 measures → heatmap; share/"% of whole" → doughnut; distribution → histogram).
-The **12-kind whitelist** also includes `area`, `boxplot`, `stacked_bar`, `pie`,
-`lollipop` — the LLM may propose them per KPI (`proposed_kinds`); Python
-validates each proposal against the whitelist and the data shape, rejecting
-what cannot be drawn (with a reason) and falling back to the rule table.
-If the data is too thin, the chart is downgraded to a simple bar stamped
-`reliability: "low_n"`. A maximum of `max_chart_count` (20) charts are kept;
-the rest are dropped and `charts_truncated` is set. Stage 5b then renders each
-kept chart as a hand-rolled SVG (`analysis/chart_renderer.py`, no plotting
-library): Okabe-Ito color-blind-safe palette, value labels, line markers, and
-an XML-escaped caption (title + `reliability` + `evidence_id`) for alt text.
+ordered 11-rule table (e.g. dates + ≥3 points → line; 2 measures → scatter;
+≥3 measures → heatmap; share/"% of whole" → doughnut; distribution → histogram;
+ranked contribution 3–15 values → pareto; growth over time → line + waterfall).
+The **14-kind whitelist** also includes `area`, `boxplot`, `stacked_bar`, `pie`,
+`lollipop`, `pareto`, `waterfall` — the LLM may propose them per KPI
+(`proposed_kinds`); Python validates each proposal against the whitelist and
+the data shape, rejecting what cannot be drawn (with a reason) and falling
+back to the rule table. If the data is too thin, the chart is downgraded to a
+simple bar stamped `reliability: "low_n"`. A maximum of `max_chart_count` (20)
+charts are kept; the rest are dropped and `charts_truncated` is set. Stage 5b
+then renders each kept chart as a hand-rolled SVG (`analysis/chart_renderer.py`,
+no plotting library): Insight Forge navy/gold palette, value labels, line
+markers, and an XML-escaped caption (title + `reliability` + `evidence_id`)
+for alt text. Stage 5c (`analysis/chart_quality.py`) gates every chart before
+it reaches the report: the SVG must be well-formed with real graphics, the
+rendered group totals must match the KPI value within 0.1%, and a DQ-based
+confidence label (missingness, repair, contract violations, outlier flags)
+stamps `metadata/chart_quality.json`.
+
+### The report (stage 7) — the redesigned template
+
+`resources/report_template.html` is a product-grade Jinja2 template: masthead
+(title/subtitle/prepared-for/date), sticky navbar with **language toggle
+(EN/AR with RTL)** and **theme toggle (light/dark)**, numbered table of
+contents, KPI cards that count up on view, and **interactive Chart.js
+canvases** in the navy/gold theme with a static SVG fallback. Every table can
+be exported to CSV (`downloadCSV`), charts carry evidence captions, and the
+embedded chart init is idempotent — switching language or theme re-renders
+charts without breaking the page.
 
 ---
 
@@ -124,7 +141,7 @@ runs/<run_id>/
 ├── data/
 │   ├── raw/                # the original uploaded file
 │   ├── extracted/          # the readable CSV the pipeline works on
-│   └── processed/          # cleaned_data.csv (+ versioned cleaned_data_attempt_*.csv)
+│   └── processed/          # validated_data.csv · cleaned_data.csv (+ versioned cleaned_data_attempt_*.csv) · analysis_ready.csv
 ├── knowledge/
 │   └── business_context.json   # what the user told us (goals, domain)
 ├── metadata/               # the "brain" — JSON contracts between stages
@@ -132,15 +149,21 @@ runs/<run_id>/
 │   ├── dataset_understanding.json  (stage 2)
 │   ├── analysis_plan.json          (stage 2 — the KPI plan)
 │   ├── data_quality_report.json    (stage 3)
+│   ├── data_contracts.json         (stage 3 — column contracts)
+│   ├── contract_violations.json    (stage 3 — what violates the contracts)
+│   ├── deep_profile.json           (stage 3 — sentinel-aware missingness + MAD outliers + impact)
+│   ├── lineage.json                (stage 3 → 4 — raw→validated→repaired→cleaned→analysis_ready)
 │   ├── cleaning_result.json        (stage 4)
+│   ├── impact_cleaning.json        (stage 4 — validated→cleaned impact)
 │   ├── chart_metadata.json         (stage 5)
-│   └── qa_verdict.json             (stage 8, future)
+│   ├── chart_quality.json          (stage 5c — per-chart quality gate + confidence labels)
+│   └── qa_verdict.json             (stage 8)
 ├── outputs/                # final results
 │   ├── kpis.json           (stage 5)
 │   ├── statistical_results.json    (stage 5)
 │   ├── evidence_registry.json      (stage 5 — the lineage log)
 │   ├── charts/             (stage 5b — the SVG files)
-│   └── insights.json       (stage 6, future)
+│   └── insights.json       (stage 6)
 └── logs/
     └── run.jsonl           # audit trail: every stage + tool call
 ```
@@ -176,9 +199,10 @@ Insight Forge
 ├── analysis/                      # pure math, no LLM
 │   ├── evidence.py                # evidence ids + evidence_registry.json (the only writer)
 │   ├── dsl_executor.py            # runs the whitelist KPI formulas
-│   ├── chart_planner.py           # 12-kind whitelist + rule table + proposal validation
-│   ├── chart_renderer.py          # [DONE] hand-rolled SVG renderers (12 kinds)
-│   ├── report_builder.py          # [DONE] Jinja2 report rendering + 9 section renderers
+│   ├── chart_planner.py           # 14-kind whitelist + 11-rule table + proposal validation
+│   ├── chart_quality.py           # [DONE] per-chart quality gate + DQ confidence labels
+│   ├── chart_renderer.py          # [DONE] hand-rolled SVG renderers (14 kinds, navy/gold palette)
+│   ├── report_builder.py          # [DONE] Jinja2 report rendering + 9 section renderers + Chart.js init
 │   ├── qa_recompute.py            # [DONE] KPI recomputation + reference validation
 │   ├── qa_verdict.py              # [DONE] score formula + deterministic verdict
 │   ├── generic/                   # statistical suite: descriptive, correlation,
@@ -195,7 +219,12 @@ Insight Forge
 │   │   ├── business_context.py    #   business questions + Generic Mode
 │   │   ├── understanding.py       #   column roles + domain + plan builder
 │   │   ├── data_quality.py        #   stage-3 checks + deterministic repair
-│   │   └── cleaning.py            #   stage-4 strategy table + executor
+│   │   ├── cleaning.py            #   stage-4 strategy table + executor
+│   │   ├── contracts.py           #   column contracts + normalization layer
+│   │   │                          #   (currency/percent/dates/units/categories)
+│   │   ├── deep_profile.py        #   sentinel-aware missingness + MAD outliers + impact
+│   │   ├── lineage.py             #   raw→validated→repaired→cleaned→analysis_ready chain
+│   │   └── io_utils.py            #   large-data I/O (Parquet cache + chunked stats)
 │   ├── tools/                     # thin CrewAI tool wrappers over core/
 │   │   ├── file_io.py             #   file_validator / file_reader / sheet_extract
 │   │   ├── profiling.py           #   pii_detector / data_profiler
@@ -213,18 +242,21 @@ Insight Forge
 │   └── utils.py                   # config loading, run_id allocation
 │
 ├── resources/
-│   └── report_template.html       # [DONE] Jinja2 HTML template for stage 7
+│   └── report_template.html       # [DONE] redesigned Jinja2 template: masthead, navbar,
+│                                  #   EN/AR language toggle + RTL, light/dark theme toggle,
+│                                  #   TOC, KPI count-up, interactive Chart.js + SVG fallback,
+│                                  #   downloadCSV, signature + footer
 │
 ├── runs/                          # one folder per run (gitignored)
 ├── cache/                         # [PLACEHOLDER] idempotency cache (Task 11)
 │
 ├── tests/
-│   ├── unit/                      # [DONE] 34 files, 487 tests passing
+│   ├── unit/                      # [DONE] 674 tests passing (unit + security, no LLM)
 │   └── agent, integration, e2e, golden, fixtures, statistical, regression, security
-│                                  # [EMPTY] future test suites (Task 12)
+│                                  # [DONE] full suite: 742 passed, 1 skipped
 │
 └── Project_Plan/                  # documentation
-    ├── Analyst-Agents.md          #   the spec (v4.4) — full design
+    ├── Analyst-Agents.md          #   the spec (v4.8) — full design
     ├── DAILY_TASKS.md             #   task tracker (12 tasks, who does what)
     ├── PROJECT_STRUCTURE.md       #   detailed structure reference
     ├── STATE.md                   #   status notes
@@ -235,7 +267,7 @@ Insight Forge
 
 ## 6. What is done vs what is remaining
 
-### Done (Tasks 1–10) — all 8 stages green, E2E verified
+### Done (Tasks 1–14) — all 8 stages green, E2E verified
 
 | Task | Area | What exists |
 |------|------|-------------|
@@ -245,12 +277,18 @@ Insight Forge
 | 4 | Stage 3 Data Quality | full check suite + deterministic repair (pure Python) |
 | 5 | Stage 4 Cleaning | strategy table, executor, versioned attempts, recheck cap |
 | 6 | Stage 5a Analysis | evidence registry, DSL executor, statistical suite, chart planner, 3 tools, `agents/analysis.py` |
-| 7 | Stage 5b Charts | hand-rolled SVG renderer (12 kinds), hybrid proposal validation, `chart_renderer_tool` + `evidence_registry_tool` |
+| 7 | Stage 5b Charts | hand-rolled SVG renderer (14 kinds, navy/gold), hybrid proposal validation, `chart_renderer_tool` + `evidence_registry_tool` |
 | 8 | Stage 6 Insights | evidence-grounded taxonomy, hedged recommendations, claim validator, `--review` gate |
-| 9 | Stage 7 Report | Jinja2 template rendering, 9 section renderers, LLM exec summary, masthead from business context |
+| 9 | Stage 7 Report | redesigned Jinja2 template (masthead, EN/AR + RTL, light/dark, TOC, KPI count-up, interactive Chart.js + SVG fallback, downloadCSV), 9 section renderers, LLM exec summary |
 | 10 | Stage 8 QA | KPI recomputation, reference validation, score formula, deterministic verdict |
+| 11 | Stage 3b Contracts + normalization | `shared/core/contracts.py` — column contracts + normalization layer (currency/percent/dates/units/categories), `data_contracts.json` + `contract_violations.json` |
+| 12 | Deep profiling | `shared/core/deep_profile.py` — sentinel-aware missingness, MAD outliers, impact analysis → `deep_profile.json` |
+| 13 | Lineage | `shared/core/lineage.py` — raw→validated→repaired→cleaned→analysis_ready chain with sha256 + rows + ops → `lineage.json` |
+| 14 | Large-data I/O + chart quality | `shared/core/io_utils.py` (Parquet cache + chunked stats) + `analysis/chart_quality.py` (5c gate: SVG integrity, KPI aggregation match, DQ confidence labels) |
 
-**Tests: 487 passing** in `tests/unit/`. Full E2E verified on `sales_demo.csv`
+**Tests: 674 passing (1 skipped)** in `tests/unit/` + `tests/security/` (no LLM,
+no workflow). Full suite: **742 passed, 1 skipped** including e2e golden runs
+on `sales_*` fixtures. Full E2E verified on `sales_demo.csv`
 (run `run_20260817_235726_1`): all 8 stages passed, QA verdict
 `APPROVED_WITH_WARNINGS` (score 97.5, 1 valid warning), report renders correctly.
 
@@ -261,7 +299,7 @@ All tasks complete. Pipeline is feature-complete.
 Notes:
 - **`python main.py <file>`** runs the full 8-stage pipeline end-to-end
 - **config.yaml** `agents.qa.model` still shares the same model as generation agents — should be distinct per spec §2.8
-- **584 tests passing** (519 unit + 65 integration/golden/security/agent)
+- **742 tests passing** (674 unit/security + 68 integration/golden/e2e)
 
 ---
 
@@ -320,7 +358,7 @@ python app.py
 | **Generic Mode** | If the user can't answer business questions in time, the run continues with generic defaults instead of blocking. |
 | **MCAR / MAR / MNAR** | Missingness patterns (completely random / related to other columns / related to the value itself). Cleaning treats them differently. |
 | **low_n** | A reliability stamp on a chart whose data is too thin (downgraded to a simple bar). |
-| **12-kind whitelist** | The only chart kinds Python can render: `bar · barh · line · doughnut · histogram · scatter · heatmap · area · boxplot · stacked_bar · pie · lollipop`. |
+| **14-kind whitelist** | The only chart kinds Python can render: `bar · barh · line · doughnut · histogram · scatter · heatmap · area · boxplot · stacked_bar · pie · lollipop · pareto · waterfall`. |
 | **proposed_kinds** | The LLM's chart-kind suggestions `[{kpi_id, kind, reason}]`; Python validates each (whitelist + data fit) and falls back to the rule table when rejected. |
 | **charts_truncated** | Flag that says some charts were dropped to respect the 20-chart cap. |
 | **Verdict** | Final result: `APPROVED`, `APPROVED_WITH_WARNINGS`, or `NEEDS_REVISION`. |
@@ -331,7 +369,7 @@ python app.py
 
 | For this… | See this file |
 |-----------|---------------|
-| The full design spec (v4.4) — every stage in depth | `Project_Plan/Analyst-Agents.md` |
+| The full design spec (v4.8) — every stage in depth | `Project_Plan/Analyst-Agents.md` |
 | The task tracker — 12 tasks, owners, handoff log | `Project_Plan/DAILY_TASKS.md` |
 | Detailed file-by-file structure | `Project_Plan/PROJECT_STRUCTURE.md` |
 | The design-level README with the same info expanded | `README.md` |

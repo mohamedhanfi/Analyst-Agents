@@ -2,9 +2,10 @@
 
 Deterministic SVG generation, one pure function per kind over the 12-kind
 whitelist. Every output is XML-escaped (charts are embedded in the HTML
-report later), uses the Okabe-Ito color-blind-safe palette, labels values on
-bars/points (never color-only), and carries a caption (title + reliability +
-evidence_id) as <title>/<desc> for alt text.
+report later), uses the Insight Forge navy/gold palette (matches the report
+theme; values are also labelled on bars/points — never color-only), and
+carries a caption (title + reliability + evidence_id) as <title>/<desc> for
+alt text.
 
 Golden rule: aggregate on ALL rows — the renderer never samples.
 """
@@ -24,9 +25,10 @@ from shared.schemas import ChartMetadata, DslOperation, KpiResult
 WIDTH, HEIGHT = 800, 450
 MARGIN = {"top": 40, "right": 30, "bottom": 80, "left": 70}
 
-# Okabe-Ito — color-blind safe (never red-green as the only encoding)
-PALETTE = ["#0072B2", "#E69F00", "#009E73", "#56B4E9", "#CC79A7",
-           "#F0E442", "#D55E00", "#000000"]
+# Insight Forge navy/gold palette — matches the report theme (G palette in
+# the template): navy accent, gold highlight, soft blues for support series.
+PALETTE = ["#0b3b8c", "#c9a227", "#5f83c7", "#14244c", "#1b7f43",
+           "#8a6100", "#b7c7e8", "#e0a96d"]
 
 _FILL = "none"
 _FONT = "12px system-ui, sans-serif"
@@ -672,6 +674,130 @@ def _render_stacked(chart: ChartMetadata, df: pd.DataFrame, kpi: KpiResult,
 
 
 # ---------------------------------------------------------------------------
+# Pareto (rule 10) — sorted contribution bars + cumulative % line
+# ---------------------------------------------------------------------------
+
+
+def _render_pareto(chart: ChartMetadata, df: pd.DataFrame, kpi: KpiResult,
+                   labels: List[str], values: List[float]) -> str:
+    if not labels or not values:
+        return _svg(chart, "<text x='50%' y='50%' text-anchor='middle' "
+                           "fill='#999'>no data</text>")
+    pairs = sorted(zip(labels, values), key=lambda p: p[1], reverse=True)
+    labels = [str(l) for l, _ in pairs]
+    values = [max(0.0, v) for _, v in pairs]
+    total = sum(values) or 1.0
+    cum = []
+    running = 0.0
+    for v in values:
+        running += v
+        cum.append(running / total * 100.0)
+    left, top, plot_w, plot_h = _axes(WIDTH, HEIGHT)
+    v_max = max(values) or 1.0
+    n = len(labels)
+    slot = plot_w / n
+    bar_w = max(2.0, slot * 0.55)
+    parts = [_grid_and_axis(left, top, plot_w, plot_h, 0, v_max, None)]
+    for i, (label, value) in enumerate(zip(labels, values)):
+        h = plot_h * value / v_max
+        x = left + slot * i + (slot - bar_w) / 2
+        parts.append(
+            f"<rect x='{x:.1f}' y='{top + plot_h - h:.1f}' width='{bar_w:.1f}' "
+            f"height='{h:.1f}' fill='{_color(0)}' fill-opacity='0.8'/>"
+            f"<text x='{x + bar_w / 2:.1f}' y='{top + plot_h - h - 5:.1f}' "
+            f"text-anchor='middle' font-size='10px' font-family='{_FONT[5:]}' "
+            f"fill='#222222'>{_fmt(value)}</text>"
+            f"<text x='{x + bar_w / 2:.1f}' y='{top + plot_h + 20}' "
+            f"text-anchor='middle' font-size='10px' "
+            f"font-family='{_FONT[5:]}' fill='#555555'>"
+            f"{escape_xml(label[:18])}</text>")
+    pts = [f"{left + slot * i + slot / 2:.1f},"
+           f"{top + plot_h * (1 - pct / 100):.1f}"
+           for i, pct in enumerate(cum)]
+    parts.append(
+        f"<polyline points='{' '.join(pts)}' fill='none' "
+        f"stroke='{_color(1)}' stroke-width='2.5'/>")
+    y80 = top + plot_h * 0.2
+    parts.append(
+        f"<line x1='{left}' y1='{y80:.1f}' x2='{left + plot_w}' "
+        f"y2='{y80:.1f}' stroke='#999999' stroke-width='1' "
+        f"stroke-dasharray='5 4'/>"
+        f"<text x='{left + plot_w - 4}' y='{y80 - 5:.1f}' "
+        f"text-anchor='end' font-size='10px' font-family='{_FONT[5:]}' "
+        f"fill='#777777'>80%</text>")
+    last = cum[-1] if cum else 0.0
+    parts.append(
+        f"<text x='{left}' y='{top + plot_h + 36}' font-size='11px' "
+        f"font-family='{_FONT[5:]}' fill='#555555'>"
+        f"top {n} contributors · top-3 = {cum[min(2, n - 1)]:.1f}% · "
+        f"total coverage = {last:.1f}% (line = cumulative %)</text>")
+    return _svg(chart, "".join(parts))
+
+
+# ---------------------------------------------------------------------------
+# Waterfall (rule 11) — period/category contributions on a running total
+# ---------------------------------------------------------------------------
+
+
+def _render_waterfall(chart: ChartMetadata, df: pd.DataFrame, kpi: KpiResult,
+                      labels: List[str], values: List[float]) -> str:
+    if not labels or not values:
+        return _svg(chart, "<text x='50%' y='50%' text-anchor='middle' "
+                           "fill='#999'>no data</text>")
+    left, top, plot_w, plot_h = _axes(WIDTH, HEIGHT)
+    n = len(labels)
+    slot = plot_w / (n + 1)
+    bar_w = max(2.0, slot * 0.55)
+    cum = 0.0
+    lows, highs = [], []
+    for v in values:
+        lows.append(min(cum, cum + v))
+        highs.append(max(cum, cum + v))
+        cum += v
+    v_min = min(lows + [0.0, cum])
+    v_max = max(highs + [0.0, cum])
+    span = (v_max - v_min) or 1.0
+    _y = lambda value: top + plot_h * (1 - (value - v_min) / span)
+    parts = [_grid_and_axis(left, top, plot_w, plot_h, v_min, v_max, None)]
+    cursor = left + slot / 2
+    prev_end = 0.0
+    for i, (label, value) in enumerate(zip(labels, values)):
+        x = cursor
+        positive = value >= 0
+        fill = _color(0) if positive else _color(3)
+        y_hi = _y(highs[i])
+        y_lo = _y(lows[i])
+        parts.append(
+            f"<rect x='{x:.1f}' y='{y_hi:.1f}' width='{bar_w:.1f}' "
+            f"height='{y_lo - y_hi:.1f}' fill='{fill}' fill-opacity='0.85'/>"
+            f"<text x='{x + bar_w / 2:.1f}' y='{_y(highs[i]) - 5:.1f}' "
+            f"text-anchor='middle' font-size='10px' font-family='{_FONT[5:]}' "
+            f"fill='#222222'>{_fmt(value)}</text>"
+            f"<text x='{x + bar_w / 2:.1f}' y='{top + plot_h + 20}' "
+            f"text-anchor='middle' font-size='10px' "
+            f"font-family='{_FONT[5:]}' fill='#555555'>"
+            f"{escape_xml(label[:12])}</text>")
+        if i > 0:
+            parts.append(
+                f"<line x1='{x - slot / 2:.1f}' y1='{_y(prev_end):.1f}' "
+                f"x2='{x:.1f}' y2='{_y(prev_end):.1f}' stroke='#aaaaaa' "
+                f"stroke-width='1'/>")
+        prev_end = highs[i]
+        cursor += slot
+    parts.append(
+        f"<rect x='{left + plot_w - bar_w:.1f}' y='{_y(0) if cum >= 0 else _y(cum):.1f}' "
+        f"width='{bar_w:.1f}' height='{abs(_y(0) - _y(cum)):.1f}' "
+        f"fill='#555555'/>"
+        f"<text x='{left + plot_w - bar_w / 2:.1f}' y='{_y(cum) - 5:.1f}' "
+        f"text-anchor='middle' font-size='11px' font-family='{_FONT[5:]}' "
+        f"fill='#222222'>total {_fmt(cum)}</text>"
+        f"<text x='{left + plot_w - bar_w / 2:.1f}' y='{top + plot_h + 20}' "
+        f"text-anchor='middle' font-size='10px' font-family='{_FONT[5:]}' "
+        f"fill='#555555'>total</text>")
+    return _svg(chart, "".join(parts))
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -700,6 +826,10 @@ _RENDERERS = {
         chart, df, kpi, data["series"]),
     "stacked_bar": lambda chart, df, kpi, data: _render_stacked(
         chart, df, kpi, data["labels"], data["values"]),
+    "pareto": lambda chart, df, kpi, data: _render_pareto(
+        chart, df, kpi, data["labels"], data["values"]),
+    "waterfall": lambda chart, df, kpi, data: _render_waterfall(
+        chart, df, kpi, data["labels"], data["values"]),
 }
 
 
@@ -719,7 +849,8 @@ def _prepare(chart: ChartMetadata, df: pd.DataFrame,
     if op is None:
         return data
     if chart.kind in ("bar", "barh", "lollipop", "doughnut", "pie",
-                      "line", "area", "stacked_bar"):
+                      "line", "area", "stacked_bar", "pareto",
+                      "waterfall"):
         labels, values = _aggregate_pairs(df, op, chart)
         data["labels"], data["values"] = labels, values
     return data

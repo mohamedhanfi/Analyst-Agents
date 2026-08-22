@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/framework-CrewAI-blue" alt="framework">
-  <img src="https://img.shields.io/badge/spec%20version-4.4.0-lightgrey" alt="spec version">
+  <img src="https://img.shields.io/badge/spec%20version-4.8.0-lightgrey" alt="spec version">
 </p>
 
 <h1 align="center">Insight Forge</h1>
@@ -34,7 +34,7 @@ A user uploads a spreadsheet. The pipeline validates it, figures out what kind o
 
 > **The LLM decides WHAT to do. Python does the work.**
 
-No LLM ever touches raw data, computes a number, cleans a value, or draws a chart. It only chooses what to run and writes the narrative text. Every computation is deterministic Python (pandas/scipy/statsmodels/matplotlib), and a dedicated QA stage recomputes 100% of the numbers independently before approval.
+No LLM ever touches raw data, computes a number, cleans a value, or draws a chart. It only chooses what to run and writes the narrative text. Every computation is deterministic Python (pandas/scipy), and a dedicated QA stage recomputes 100% of the numbers independently before approval.
 
 ## How it works
 
@@ -91,11 +91,12 @@ insight-forge/
 │   ├── report_agent.py         # stage 7
 │   └── qa_agent.py             # stage 8
 ├── analysis/                   # pure computation, no LLM
-│   ├── chart_planner.py        # 12-kind whitelist + data-shape rule table
-│   ├── chart_renderer.py       # hand-rolled SVG renderers (Okabe-Ito, labels, captions)
+│   ├── chart_planner.py        # 14-kind whitelist + 11-rule data-shape table
+│   ├── chart_quality.py        # stage 5c per-chart quality gate + DQ confidence labels
+│   ├── chart_renderer.py       # hand-rolled SVG renderers (navy/gold palette, labels, captions)
 │   ├── dsl_executor.py         # whitelist DSL ops over ALL rows
 │   ├── evidence.py             # evidence_id minting + registry (the only writer)
-│   ├── report_builder.py       # Jinja2 report rendering + 9 section renderers
+│   ├── report_builder.py       # Jinja2 report rendering + 9 section renderers + Chart.js init
 │   ├── qa_recompute.py         # KPI recomputation from cleaned CSV + reference validation
 │   ├── qa_verdict.py           # score formula + deterministic verdict table
 │   ├── generic/                # descriptive · correlation · distribution · trend · comparison
@@ -109,7 +110,11 @@ insight-forge/
 │   │   ├── business_context.py  # BusinessContextGatherer (dialog + generic mode)
 │   │   ├── understanding.py     # role rules §2.2 + domain facts + DSL plan builder
 │   │   ├── data_quality.py      # §2.3 checks + deterministic repair
-│   │   └── cleaning.py          # §2.4 strategy table + execution
+│   │   ├── cleaning.py          # §2.4 strategy table + execution
+│   │   ├── contracts.py         # column contracts + normalization layer (currency/percent/dates/units)
+│   │   ├── deep_profile.py      # sentinel-aware missingness + MAD outliers + impact analysis
+│   │   ├── lineage.py           # raw→validated→repaired→cleaned→analysis_ready chain
+│   │   └── io_utils.py          # large-data I/O (Parquet cache + chunked stats)
 │   ├── tools/                   # CrewAI @tool wrappers, aggregated in __init__.py
 │   │   ├── file_io.py           # file_validator · file_reader · file_sheet_extract
 │   │   ├── profiling.py         # pii_detector · data_profiler
@@ -126,13 +131,13 @@ insight-forge/
 │   ├── logger.py                # structured per-stage logs → runs/<run_id>/logs/
 │   └── utils.py                 # config load, run_id allocator
 ├── resources/
-│   ├── report_template.html     # Jinja2 HTML report template
+│   ├── report_template.html     # redesigned Jinja2 template: masthead, EN/AR + RTL, light/dark, TOC, KPI count-up, interactive Chart.js + SVG fallback, downloadCSV
 │   └── business_context/        # static business-context templates
 ├── runs/                        # run isolation — per-run output (gitignored)
 │   └── <run_id>/                # data/ · knowledge/ · metadata/ · outputs/ · logs/ · report.html
 ├── cache/                       # key→run_id index (idempotency)
 └── tests/
-    ├── unit/                    # 487 tests passing
+    ├── unit/                    # 674 tests passing (unit + security, no LLM)
     └── fixtures/                # test templates (report_minimal.html, etc.)
 ```
 
@@ -144,9 +149,9 @@ Fully annotated tree → [Full repository tree](#full-repository-tree) below.
 |---|---|
 | Orchestration | CrewAI (Agents, Tasks, Flows) |
 | Data | pandas, numpy, openpyxl |
-| Stats | scipy, statsmodels |
-| Charts | matplotlib, seaborn |
-| Reporting | jinja2, weasyprint, babel |
+| Stats | scipy |
+| Charts | hand-rolled SVG renderers + Chart.js (interactive canvases in the report) |
+| Reporting | jinja2 (autoescape), Bootstrap 5 (report theme) |
 | Validation | Pydantic |
 
 ## Guardrails
@@ -167,13 +172,13 @@ python main.py
 
 ## Testing
 
-Planned suites: unit, integration, statistical, agent, security, and end-to-end runs against golden datasets with precomputed ground truth (`sales_small`, `sales_missing`, `sales_outliers`, `sales_duplicates`, `sales_injection`, `sales_pii`, `hr`, `finance`).
+**674 tests passing (1 skipped)** in `tests/unit/` + `tests/security/` — runs with **no LLM and no pipeline workflow** (`pytest tests/unit tests/security`). Full suite: **742 passed, 1 skipped** including e2e golden runs on `sales_*` fixtures. Suites: unit, integration, statistical, agent, security, and end-to-end runs against golden datasets with precomputed ground truth (`sales_small`, `sales_missing`, `sales_outliers`, `sales_duplicates`, `sales_injection`, `sales_pii`, `hr`, `finance`).
 
 Full test suite breakdown → [Full testing reference](#full-testing-reference) below.
 
 ## Status & roadmap
 
-**Production-oriented, not production-ready.** All 8 pipeline stages are implemented and E2E verified on real data. Orchestration (`crew/flows.py` + `main.py`) and integration/e2e tests are next. Roadmap: orchestration wiring → golden-dataset evaluation suite → domain KPI modules → observability/cost dashboard → interactive charts + Arabic/RTL reports → forecasting & anomaly detection.
+**Production-oriented, not production-ready.** All 8 pipeline stages are implemented and E2E verified on real data. Recent additions: column contracts + normalization layer, deep profiling (sentinel-aware missingness, MAD outliers, impact), full data lineage, large-data Parquet cache + chunked stats, a per-chart quality gate (5c), pareto/waterfall chart kinds, and a redesigned report template with EN/AR + RTL, light/dark themes, and interactive Chart.js charts. Roadmap: golden-dataset evaluation suite → domain KPI modules → observability/cost dashboard → forecasting & anomaly detection.
 
 ---
 
@@ -328,9 +333,9 @@ Rule: **Repair never invents data.** It only casts types, drops exact duplicates
 </details>
 
 <details>
-<summary><b>5. Analysis</b> — <code>agents/analyst_agent.py</code></summary>
+<summary><b>5. Analysis</b> — <code>agents/analysis.py</code></summary>
 
-**Mission:** compute everything on the full cleaned dataset. LLM selects KPIs and re-ranks chart candidates; Python executes DSL, runs stats, plans & draws charts, writes evidence.
+**Mission:** compute everything on the full cleaned dataset. LLM selects KPIs and re-ranks chart candidates; Python executes DSL, runs stats, plans & draws charts, writes evidence, and quality-gates every chart (5c).
 
 **Statistical suite:**
 
@@ -390,6 +395,10 @@ sum, mean, median, count, nunique, min, max, std, growth, correlation, ratio
 | 7 | 2 numeric measures | scatter + trend line if r significant |
 | 8 | ≥3 numeric measures | ranked correlation heatmap |
 | 9 | share/"% of whole" ≈100% | doughnut |
+| 10 | ranked sum/count contribution, 3–15 values | pareto (sorted bars + cumulative % + 80/20 line) |
+| 11 | growth KPI over time (≥3 periods) | line + waterfall of period contributions |
+
+**14-kind whitelist:** `bar · barh · line · doughnut · histogram · scatter · heatmap · area · boxplot · stacked_bar · pie · lollipop · pareto · waterfall`. The last seven exist only via LLM proposal or explicit plan intent; Python validates every proposal and falls back to the rule table when rejected.
 
 If data is too thin, planner downgrades to a simple bar/table and stamps `reliability: "low_n"`.
 
@@ -402,8 +411,10 @@ If data is too thin, planner downgrades to a simple bar/table and stamps `reliab
 }
 ```
 
-**Accessibility:** color-blind safe palettes, pattern+label redundancy (never color-only), alt-text captions per chart.
-**Localization:** numeric/date formatting follows report locale via `babel`, applied by Python at render time — not the LLM.
+**Quality gate (stage 5c):** `analysis/chart_quality.py` checks every chart before it reaches the report — SVG integrity, rendered group totals must match the KPI value within 0.1%, and a DQ-based confidence label (missingness/repair/contract violations/outliers) → `metadata/chart_quality.json`.
+
+**Accessibility:** navy/gold palette with value labels on bars/points (never color-only), line markers, alt-text captions per chart (title + reliability + evidence_id).
+**Localization:** numeric/date formatting follows report locale (hand-rolled, no babel); the report template ships full EN/AR translations with RTL layout and a light/dark theme toggle.
 
 **Input:** cleaned data, plan, understanding, business context, cleaning result
 **Output:** `outputs/kpis.json`, `outputs/statistical_results.json`, `outputs/charts/*.svg`, `metadata/chart_metadata.json`, `outputs/evidence_registry.json`
@@ -470,6 +481,8 @@ If data is too thin, planner downgrades to a simple bar/table and stamps `reliab
 
 **Security in render:** Jinja `autoescape=True`, HTML sanitizer, CSP header — cell content never rendered raw.
 
+**Report design:** `resources/report_template.html` is a product-grade Jinja2 template — masthead (title/subtitle/prepared-for/date), sticky navbar with **language toggle (EN/AR, full RTL)** and **theme toggle (light/dark)**, numbered table of contents, KPI cards with count-up on view, **interactive Chart.js canvases** (navy/gold palette) with static SVG fallback and per-chart drill-down, `downloadCSV` export of every table, signature + footer, back-to-top. The embedded chart init is idempotent (`__REPORT_CHART_INSTANCES__` + `__rebuildReportCharts`) so language/theme switches re-render charts without breaking the page.
+
 **Input:** all `outputs/`, `metadata/`, `knowledge/` files, `resources/report_template.html`
 **Output:** `report.html`, `metadata/report_result.json`
 
@@ -516,7 +529,7 @@ insight-forge/
 ├── main.py                     # entry — builds Crew, runs Flow
 ├── config.yaml                 # per-agent role/goal/backstory/model, hard limits, retention, review_required
 ├── .env.example                # API keys (loaded via shared/utils.py, never committed)
-├── pyproject.toml              # crewai + pandas, numpy, scipy, statsmodels, matplotlib, seaborn, openpyxl, jinja2, weasyprint, babel
+├── pyproject.toml              # crewai + pandas, numpy, scipy, openpyxl, jinja2, pyyaml, python-dotenv
 ├── crew/
 │   ├── crew.py                 # CrewAI Agents + Tasks in order
 │   └── flows.py                # DQ gate, Cleaning re-check, QA verdict branches
@@ -530,11 +543,12 @@ insight-forge/
 │   ├── report_agent.py
 │   └── qa_agent.py
 ├── analysis/                   # pure computation, no LLM
-│   ├── chart_planner.py        # data-shape rule table → chart kind + reason
-│   ├── chart_renderer.py       # hand-rolled SVG renderers (12 kinds)
+│   ├── chart_planner.py        # data-shape rule table (11 rules) → chart kind + reason
+│   ├── chart_quality.py        # stage 5c quality gate + DQ confidence labels
+│   ├── chart_renderer.py       # hand-rolled SVG renderers (14 kinds, navy/gold palette)
 │   ├── dsl_executor.py         # whitelist DSL ops over ALL rows
 │   ├── evidence.py             # evidence_id minting + evidence_registry.json (the only writer)
-│   ├── report_builder.py       # Jinja2 report rendering + 9 section renderers
+│   ├── report_builder.py       # Jinja2 report rendering + 9 section renderers + Chart.js init
 │   ├── qa_recompute.py         # KPI recomputation + reference validation
 │   ├── qa_verdict.py           # score formula + deterministic verdict
 │   ├── generic/                # descriptive, correlation, distribution, trend, comparison
@@ -548,7 +562,11 @@ insight-forge/
 │   │   ├── business_context.py  # BusinessContextGatherer (dialog + generic mode)
 │   │   ├── understanding.py     # role rules §2.2 + domain facts + DSL plan builder
 │   │   ├── data_quality.py      # §2.3 checks + deterministic repair
-│   │   └── cleaning.py          # §2.4 strategy table + execution
+│   │   ├── cleaning.py          # §2.4 strategy table + execution
+│   │   ├── contracts.py         # column contracts + normalization layer
+│   │   ├── deep_profile.py      # sentinel-aware missingness + MAD outliers + impact
+│   │   ├── lineage.py           # raw→validated→repaired→cleaned→analysis_ready chain
+│   │   └── io_utils.py          # large-data I/O (Parquet cache + chunked stats)
 │   ├── tools/                   # CrewAI @tool wrappers, aggregated in __init__.py
 │   │   ├── file_io.py           # file_validator · file_reader · file_sheet_extract
 │   │   ├── profiling.py         # pii_detector · data_profiler
@@ -569,9 +587,9 @@ insight-forge/
 │   └── business_context/       # static business-context templates
 ├── runs/                       # run isolation — the only writable surface per run
 │   └── <run_id>/
-│       ├── data/                # raw/ extracted/ processed/
+│       ├── data/                # raw/ extracted/ processed/ (validated_data · cleaned_data · analysis_ready)
 │       ├── knowledge/           # business_context.json (per-run)
-│       ├── metadata/            # data_profile · understanding · analysis_plan · dq_report · cleaning_result · chart_metadata · report_result · qa_verdict
+│       ├── metadata/            # data_profile · understanding · analysis_plan · dq_report · data_contracts · contract_violations · deep_profile · lineage · cleaning_result · impact_cleaning · chart_metadata · chart_quality · report_result · qa_verdict
 │       ├── outputs/             # kpis.json · statistical_results.json · insights.json · evidence_registry.json · charts/
 │       ├── report.html          # final rendered report
 │       ├── logs/                # LLM/tool logs
@@ -808,4 +826,4 @@ A single root `config.yaml` holds:
 
 ---
 
-*Generated from `Insight Forge — Implementation Guide` v4.3.0.*
+*Generated from `Insight Forge — Implementation Guide` v4.8.0.*

@@ -121,6 +121,43 @@ def test_flagged_negative_measure_is_drop_negative():
     assert strategy["columns"][0]["action"] == "drop_negative"
 
 
+def test_flagged_negative_measure_keeps_missingness_fill():
+    """§2.4 regression: a measure flagged negative AND MCAR<5% needs BOTH
+    drop_negative and median_fill — the negative flag must not suppress
+    the missingness action (single-action-per-column bug)."""
+    understanding = make_understanding([("revenue", "measure", "float64")])
+    report = make_report(
+        {"revenue": {"missing": 1, "rate": 0.01, "assessment": "MCAR"}})
+    report.invalid = {"revenue": ["negative"]}
+    strategy = build_strategy(understanding, report)
+    actions = [c["action"] for c in strategy["columns"]
+               if c["column"] == "revenue"]
+    assert actions == ["drop_negative", "median_fill"]
+
+    df = pd.DataFrame({"revenue": [-5.0, 10.0, None, 30.0]})
+    cleaned, log = execute_strategy(df, strategy, understanding)
+    assert cleaned["revenue"].tolist() == [10.0, 20.0, 30.0]
+    assert any(op["op"] == "drop_negative" for op in log)
+    assert any(op["op"] == "fillna_median" for op in log)
+    assert not cleaned["revenue"].isna().any()
+
+
+def test_normalize_preserves_llm_fill_with_negative_override():
+    """The deterministic negative override is ADDED next to the LLM's fill
+    action (never replacing it), and runs before it."""
+    understanding = make_understanding([("revenue", "measure", "float64")])
+    report = make_report(
+        {"revenue": {"missing": 1, "rate": 0.01, "assessment": "MCAR"}})
+    report.invalid = {"revenue": ["negative"]}
+    strategy, errors = normalize_strategy(
+        {"columns": [{"column": "revenue", "action": "median_fill"}]},
+        understanding, report)
+    assert errors == []
+    actions = [c["action"] for c in strategy["columns"]
+               if c["column"] == "revenue"]
+    assert actions == ["drop_negative", "median_fill"]
+
+
 def test_drop_negative_removes_flagged_rows():
     understanding = make_understanding([("revenue", "measure", "float64")])
     df = pd.DataFrame({"revenue": [-5.0, 10.0, -1.0, 30.0]})
