@@ -12,6 +12,12 @@ llm:
   base_url: "https://openrouter.ai/api/v1"
   api_key_env: OPENROUTER_API_KEY
   model: openrouter/z-ai/glm-5.2:free
+  # Tried in order when the primary exhausts its retries (e.g. the shared
+  # :free pool answers 429 upstream). Both tested live on OpenRouter and
+  # support tools + structured outputs.
+  fallback_models:
+    - openrouter/nvidia/nemotron-3-super-120b-a12b:free
+    - openrouter/dots-studio/dots-3-note-preview:free
   temperature: 0.0        # reproducible LLM stages (§5: temperature 0 + seed)
   seed: 42
   max_retries: 3          # LLM retries per agent task (§1)

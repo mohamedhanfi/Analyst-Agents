@@ -54,12 +54,14 @@ def build_llm(cfg: Dict[str, Any], agent_name: str) -> LLM:
     return LLM(**kwargs)
 
 
-def _llm_kwargs(cfg: Dict[str, Any], agent_name: str) -> Dict[str, Any]:
+def _llm_kwargs(cfg: Dict[str, Any], agent_name: str,
+                model: Optional[str] = None) -> Dict[str, Any]:
     """litellm-compatible kwargs for direct calls (same config as CrewAI)."""
     llm_cfg = cfg.get("llm", {})
     agent_cfg = cfg.get("agents", {}).get(agent_name, {})
     kwargs: Dict[str, Any] = dict(
-        model=agent_cfg.get("model") or llm_cfg.get("model", DEFAULT_MODEL),
+        model=model or agent_cfg.get("model")
+        or llm_cfg.get("model", DEFAULT_MODEL),
         temperature=float(llm_cfg.get("temperature", 0.0)),
         seed=int(llm_cfg.get("seed", 42)),
     )
@@ -74,6 +76,42 @@ def _llm_kwargs(cfg: Dict[str, Any], agent_name: str) -> Dict[str, Any]:
     if max_tokens:
         kwargs["max_tokens"] = int(max_tokens)
     return kwargs
+
+
+def _is_rate_limit(error: str) -> bool:
+    """True when *error* looks like an HTTP 429 / quota saturation."""
+    low = error.lower()
+    return ("429" in error or "ratelimit" in low
+            or "rate-limited" in low or "rate limit" in low)
+
+
+def _backoff_sleep(attempt: int, error: str) -> None:
+    """Exponential backoff between attempts; rate limits wait longer.
+
+    Shared free pools (e.g. OpenRouter :free models) saturate upstream for
+    tens of seconds — a short fixed retry burns attempts while busy."""
+    wait = min(2 ** (attempt - 1), 8)
+    if _is_rate_limit(error):
+        wait = max(wait, min(15 * attempt, 45))
+    time.sleep(wait)
+
+
+def _model_chain(cfg: Dict[str, Any], agent_name: str) -> List[str]:
+    """Primary model first, then ``llm.fallback_models`` (deduplicated).
+
+    When the primary model is saturated or failing all retries, direct
+    LLM calls fall through this chain before degrading to the
+    deterministic per-stage fallback."""
+    llm_cfg = cfg.get("llm", {})
+    agent_cfg = cfg.get("agents", {}).get(agent_name, {})
+    primary = str(agent_cfg.get("model")
+                  or llm_cfg.get("model", DEFAULT_MODEL))
+    models = [primary]
+    for m in llm_cfg.get("fallback_models") or []:
+        m = str(m)
+        if m and m not in models:
+            models.append(m)
+    return models
 
 
 def complete_json(
@@ -111,38 +149,42 @@ def complete_json(
         {"role": "user", "content": user},
     ]
     last_error = "no response"
-    for attempt in range(1, retries + 1):
-        try:
-            resp = litellm.completion(
-                messages=messages, **_llm_kwargs(cfg, agent_name))
-            content = resp.choices[0].message.content
-            if not content or not str(content).strip():
-                last_error = "empty LLM response"
-                warnings.append(f"llm_attempt_{attempt}_empty")
-                continue
-            payload = _extract_json(str(content))
-            if payload is None:
-                last_error = "LLM output was not JSON"
-                warnings.append(f"llm_attempt_{attempt}_not_json")
-                continue
-            if schema is not None:
-                try:
-                    payload = schema.model_validate(payload).model_dump()
-                except Exception as exc:  # noqa: BLE001 -- schema reject
-                    last_error = f"schema validation failed: {exc}"
-                    warnings.append(f"llm_attempt_{attempt}_schema_reject")
+    for model in _model_chain(cfg, agent_name):
+        kwargs = _llm_kwargs(cfg, agent_name, model=model)
+        for attempt in range(1, retries + 1):
+            try:
+                resp = litellm.completion(messages=messages, **kwargs)
+                content = resp.choices[0].message.content
+                if not content or not str(content).strip():
+                    last_error = "empty LLM response"
+                    warnings.append(f"llm_attempt_{attempt}_empty")
                     continue
-            if validator is not None:
-                ok, errs = validator(payload)
-                if not ok:
-                    last_error = "; ".join(errs) or "semantic reject"
-                    warnings.append(f"llm_attempt_{attempt}_semantic_reject")
+                payload = _extract_json(str(content))
+                if payload is None:
+                    last_error = "LLM output was not JSON"
+                    warnings.append(f"llm_attempt_{attempt}_not_json")
                     continue
-            return payload, warnings
-        except Exception as exc:  # noqa: BLE001 -- transient provider errors
-            last_error = str(exc)
-            warnings.append(f"llm_attempt_{attempt}_error")
-            time.sleep(min(2 ** (attempt - 1), 8))
+                if schema is not None:
+                    try:
+                        payload = schema.model_validate(payload).model_dump()
+                    except Exception as exc:  # noqa: BLE001 -- schema reject
+                        last_error = f"schema validation failed: {exc}"
+                        warnings.append(
+                            f"llm_attempt_{attempt}_schema_reject")
+                        continue
+                if validator is not None:
+                    ok, errs = validator(payload)
+                    if not ok:
+                        last_error = "; ".join(errs) or "semantic reject"
+                        warnings.append(
+                            f"llm_attempt_{attempt}_semantic_reject")
+                        continue
+                return payload, warnings
+            except Exception as exc:  # noqa: BLE001 -- transient provider errors
+                last_error = str(exc)
+                warnings.append(f"llm_attempt_{attempt}_error")
+                _backoff_sleep(attempt, last_error)
+        warnings.append(f"llm_model_exhausted_{model}")
     warnings.append(f"llm_complete_json_failed_{last_error[:120]}")
     return None, warnings
 
@@ -168,21 +210,23 @@ def complete_text(
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    for attempt in range(1, retries + 1):
-        try:
-            resp = litellm.completion(
-                messages=messages, **_llm_kwargs(cfg, agent_name))
-            content = resp.choices[0].message.content
-            text = str(content or "").strip()
-            if not text:
-                last_error = "empty LLM response"
-                warnings.append(f"llm_attempt_{attempt}_empty")
-                continue
-            return text, warnings
-        except Exception as exc:  # noqa: BLE001 -- transient provider errors
-            last_error = str(exc)
-            warnings.append(f"llm_attempt_{attempt}_error")
-            time.sleep(min(2 ** (attempt - 1), 8))
+    for model in _model_chain(cfg, agent_name):
+        kwargs = _llm_kwargs(cfg, agent_name, model=model)
+        for attempt in range(1, retries + 1):
+            try:
+                resp = litellm.completion(messages=messages, **kwargs)
+                content = resp.choices[0].message.content
+                text = str(content or "").strip()
+                if not text:
+                    last_error = "empty LLM response"
+                    warnings.append(f"llm_attempt_{attempt}_empty")
+                    continue
+                return text, warnings
+            except Exception as exc:  # noqa: BLE001 -- transient provider errors
+                last_error = str(exc)
+                warnings.append(f"llm_attempt_{attempt}_error")
+                _backoff_sleep(attempt, last_error)
+        warnings.append(f"llm_model_exhausted_{model}")
     warnings.append(f"llm_complete_text_failed_{last_error[:120]}")
     return None, warnings
 
@@ -213,7 +257,14 @@ def test_connection(
             return None
         return "LLM returned no choices"
     except Exception as exc:  # noqa: BLE001 -- any provider/auth/network error
-        return str(exc)[:300]
+        msg = str(exc)[:300]
+        # A rate-limit reply still proves connectivity AND auth are fine —
+        # the provider simply answered "busy". Shared :free pools saturate
+        # regularly; blocking run start on that makes the app unusable.
+        # Every LLM stage already degrades deterministically per-call.
+        if _is_rate_limit(msg):
+            return None
+        return msg
 
 
 def _extract_json(content: str) -> Optional[Dict[str, Any]]:

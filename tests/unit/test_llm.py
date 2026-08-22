@@ -148,3 +148,79 @@ def _MakeJsonSchema():
         notes: list = Field(default_factory=list)
 
     return QaReview
+
+
+# ---------------------------------------------------------------------------
+# Model fallback chain + rate-limit handling (429 resilience)
+# ---------------------------------------------------------------------------
+
+
+def test_model_chain_primary_then_fallbacks_deduped():
+    from shared.llm import _model_chain
+    cfg = _cfg(model="primary/one",
+               fallback_models=["backup/two", "primary/one", "", "three/x"])
+    assert _model_chain(cfg, "qa") == ["primary/one", "backup/two", "three/x"]
+
+
+def test_complete_json_falls_back_on_rate_limit(monkeypatch):
+    from shared import llm as llm_mod
+    import litellm
+
+    seen_models = []
+
+    def fake(messages, **kw):
+        seen_models.append(kw["model"])
+        if kw["model"] == "primary/one":
+            raise RuntimeError("429 rate-limited upstream")
+        return _FakeResp('{"ok": true}')
+
+    monkeypatch.setattr(litellm, "completion", fake)
+    monkeypatch.setattr(llm_mod.time, "sleep", lambda s: None)
+    cfg = _cfg(model="primary/one", fallback_models=["backup/two"])
+    payload, warnings = llm_mod.complete_json(cfg, "qa", "sys", "user")
+    assert payload == {"ok": True}
+    assert seen_models[-1] == "backup/two"
+    assert any("exhausted_primary/one" in w for w in warnings)
+
+
+def test_backoff_sleep_longer_on_rate_limit(monkeypatch):
+    from shared import llm as llm_mod
+
+    waits = []
+    monkeypatch.setattr(llm_mod.time, "sleep", lambda s: waits.append(s))
+    llm_mod._backoff_sleep(1, "no error here")
+    llm_mod._backoff_sleep(1, "HTTP 429 too many requests")
+    assert waits[0] == 1
+    assert waits[1] == 15
+
+
+def test_is_rate_limit_matches_variants():
+    from shared.llm import _is_rate_limit
+    assert _is_rate_limit("litellm.RateLimitError: ... code 429")
+    assert _is_rate_limit("temporarily rate-limited upstream")
+    assert _is_rate_limit("Rate limit exceeded")
+    assert not _is_rate_limit("401 invalid api key")
+
+
+def test_test_connection_treats_rate_limit_as_reachable(monkeypatch):
+    from shared import llm as llm_mod
+    import litellm
+
+    def fake(messages, **kw):
+        raise RuntimeError("OpenrouterException - 429 temporarily "
+                           "rate-limited upstream")
+
+    monkeypatch.setattr(litellm, "completion", fake)
+    assert llm_mod.test_connection(_cfg()) is None
+
+
+def test_test_connection_reports_auth_errors(monkeypatch):
+    from shared import llm as llm_mod
+    import litellm
+
+    def fake(messages, **kw):
+        raise RuntimeError("AuthenticationError: invalid api key")
+
+    monkeypatch.setattr(litellm, "completion", fake)
+    err = llm_mod.test_connection(_cfg())
+    assert err is not None and "invalid api key" in err
